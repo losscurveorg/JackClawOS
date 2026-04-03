@@ -261,4 +261,5 @@ export function createMockScheduleContext(
 
 // ─── Harness Types ────────────────────────────────────────────────────────────
 
-export type { HarnessTask, HarnessResult } from '@jackclaw/harness'
+// HarnessTask and HarnessResult — re-exported via relative path (workspace link pending)
+// export type { HarnessTask, HarnessResult } from '@jackclaw/harness'
