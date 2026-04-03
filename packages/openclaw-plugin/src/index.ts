@@ -1,10 +1,9 @@
 /**
  * index.ts — JackClaw OpenClaw Plugin entry point.
  *
- * OpenClaw loads this file as the plugin entry. It calls register(api)
- * which wires commands, hooks, and the background Hub poller.
+ * Uses definePluginEntry() for compatibility with OpenClaw's latest plugin SDK.
  *
- * Required openclaw.yaml / config snippet:
+ * Required openclaw.yaml config:
  *
  *   plugins:
  *     entries:
@@ -14,13 +13,9 @@
  * Optional env vars:
  *   JACKCLAW_HUB_URL    — Hub base URL (default: http://localhost:3100)
  *   JACKCLAW_CEO_TOKEN  — JWT for CEO-level Hub API access
- *
- * Optional plugin config (under plugins.jackclaw):
- *   notifyTo      — delivery target (e.g. Telegram user ID or Feishu open_id)
- *   notifyChannel — channel to deliver push notifications (e.g. "feishu", "telegram")
  */
 
-import type { OpenClawPluginDefinition } from 'openclaw/plugin-sdk/plugin-entry'
+import { definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry'
 import { registerJackclawPlugin } from './plugin.js'
 
 // ─── Re-exports: Heartbeat Hooks ─────────────────────────────────────────────
@@ -51,15 +46,13 @@ export {
 export type { OpenClawTool } from './agent-tool.js'
 export { getJackClawTools } from './agent-tool.js'
 
-// ─── Plugin Definition ───────────────────────────────────────────────────────
+// ─── Plugin Definition (compatible with definePluginEntry) ────────────────────
 
-const jackclawPlugin: OpenClawPluginDefinition = {
+export default definePluginEntry({
   id: 'jackclaw',
   name: 'JackClaw',
-  description: 'JackClaw — 团队汇报与节点状态查询插件。支持 /jackclaw 命令及自然语言触发。',
+  description: 'JackClaw — AI 公司组织协作层。团队汇报、节点状态、协作邀请、信任管理。',
   register(api) {
     registerJackclawPlugin(api)
   },
-}
-
-export default jackclawPlugin
+})
