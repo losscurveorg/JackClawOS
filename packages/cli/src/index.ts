@@ -7,6 +7,7 @@ import { registerReport } from './commands/report';
 import { registerNodes } from './commands/nodes';
 import { registerConfig } from './commands/config';
 import { mentionCommand, identityCommand, sessionsCommand } from './commands/identity';
+import { registerStartCommand } from './commands/start';
 
 const program = new Command();
 
@@ -24,5 +25,6 @@ registerConfig(program);
 mentionCommand(program);
 identityCommand(program);
 sessionsCommand(program);
+registerStartCommand(program);
 
 program.parse(process.argv);
