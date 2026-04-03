@@ -65,6 +65,29 @@ function ok(name, cond) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+function reqWithHeaders(method, urlPath, body = null, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(urlPath, HUB_URL);
+    const hdrs = { 'Content-Type': 'application/json', ...headers };
+    const opts = {
+      hostname: url.hostname, port: url.port,
+      path: url.pathname + url.search, method, headers: hdrs, timeout: 5000,
+    };
+    const r = http.request(opts, (res) => {
+      let d = '';
+      res.on('data', (c) => (d += c));
+      res.on('end', () => {
+        try { resolve({ s: res.statusCode, b: JSON.parse(d) }); }
+        catch { resolve({ s: res.statusCode, b: d }); }
+      });
+    });
+    r.on('error', reject);
+    r.on('timeout', () => { r.destroy(); reject(new Error('timeout')); });
+    if (body) r.write(JSON.stringify(body));
+    r.end();
+  });
+}
+
 // ─── Hub Startup ───────────────────────────────────────────────
 
 async function startHub() {
@@ -332,6 +355,220 @@ async function testDirectory() {
   ok('Has agents', (r3.b?.count ?? 0) >= 1);
 }
 
+// ─── Payment Vault Tests ───────────────────────────────────────
+
+async function testPaymentVault() {
+  console.log('\n🔷 Payment Vault');
+
+  // 1. Submit payment (CN jurisdiction, amount > autoApproveLimit → pending_human)
+  const r1 = await req('POST', '/api/payment/submit', {
+    nodeId: 'alice',
+    amount: 500,
+    currency: 'CNY',
+    recipient: 'vendor@example.com',
+    description: 'Cloud hosting bill',
+    category: 'infrastructure',
+    jurisdiction: 'CN',
+    paymentMethod: 'alipay',
+  }, aliceToken);
+  ok('Payment submit → 201', r1.s === 201);
+  ok('Returns payment.requestId', typeof r1.b?.payment?.requestId === 'string');
+  const paymentId = r1.b?.payment?.requestId;
+
+  // 2. Get pending (CEO token)
+  const r2 = await req('GET', '/api/payment/pending', null, ceoToken);
+  ok('Pending → 200', r2.s === 200);
+  const pendingBefore = r2.b?.requests?.length ?? 0;
+  ok('Has ≥1 pending', pendingBefore >= 1);
+
+  // 3. Approve without human-token → 401
+  const humanTokenSecret = 'change-me-in-production';
+  const hmacApprove = crypto.createHmac('sha256', humanTokenSecret)
+    .update(paymentId)
+    .digest('hex');
+  const r3 = await req('POST', `/api/payment/approve/${paymentId}`, {}, ceoToken);
+  ok('Approve without human-token → 401', r3.s === 401);
+
+  // 4. Approve with proper human token
+  const r3b = await reqWithHeaders('POST', `/api/payment/approve/${paymentId}`, {},
+    { 'Authorization': `Bearer ${ceoToken}`, 'x-human-token': hmacApprove });
+  ok('Approve with human-token → 200', r3b.s === 200);
+
+  // 5. Pending should decrease
+  const r4 = await req('GET', '/api/payment/pending', null, ceoToken);
+  const pendingAfter = r4.b?.requests?.length ?? 0;
+  ok('Pending decreased after approve', pendingAfter < pendingBefore);
+
+  // 6. Submit another, then reject
+  const r5 = await req('POST', '/api/payment/submit', {
+    nodeId: 'bob',
+    amount: 500,
+    currency: 'CNY',
+    recipient: 'suspicious@example.com',
+    description: 'Suspicious payment',
+    category: 'general',
+    jurisdiction: 'CN',
+    paymentMethod: 'wechat_pay',
+  }, bobToken);
+  const rejectId = r5.b?.payment?.requestId;
+  const hmacReject = crypto.createHmac('sha256', humanTokenSecret)
+    .update(rejectId)
+    .digest('hex');
+  const r5b = await reqWithHeaders('POST', `/api/payment/reject/${rejectId}`,
+    { reason: 'Looks suspicious' },
+    { 'Authorization': `Bearer ${ceoToken}`, 'x-human-token': hmacReject });
+  ok('Reject with human-token → 200', r5b.s === 200);
+
+  // 7. Audit log
+  const r6 = await req('GET', '/api/payment/audit/alice', null, ceoToken);
+  ok('Audit log → 200', r6.s === 200);
+}
+
+// ─── /api/ask Tests ────────────────────────────────────────────
+
+async function testAskProxy() {
+  console.log('\n🔷 /api/ask Proxy');
+
+  // 1. Missing prompt → 400
+  const r1 = await req('POST', '/api/ask', {}, aliceToken);
+  ok('No prompt → 400', r1.s === 400);
+  ok('Error mentions prompt', (r1.b?.error || '').includes('prompt'));
+
+  // 2. With prompt but nodes have fake callbackUrls → 502 (unreachable)
+  const r2 = await req('POST', '/api/ask', { prompt: 'Hello' }, aliceToken);
+  ok('/api/ask responds (502 or 503)', r2.s === 502 || r2.s === 503);
+
+  // 3. Ask with explicit nodeId that doesn't exist
+  const r3 = await req('POST', '/api/ask', {
+    prompt: 'Hello',
+    nodeId: 'nonexistent-node',
+  }, aliceToken);
+  ok('Nonexistent node → 503', r3.s === 503);
+  ok('Returns available list', Array.isArray(r3.b?.available));
+}
+
+// ─── Memory Search Tests (direct import) ───────────────────────
+
+async function testMemorySearch() {
+  console.log('\n🔷 Memory Search (MemoryManager)');
+
+  let MemoryManager;
+  try {
+    const memModule = require(path.join(__dirname, '..', 'packages', 'memory', 'dist', 'index.js'));
+    MemoryManager = memModule.MemoryManager;
+  } catch (e) {
+    console.log(`  [skip] Cannot load @jackclaw/memory: ${e.message}`);
+    return;
+  }
+
+  const mgr = new MemoryManager();
+  const testNodeId = `e2e-test-${Date.now()}`;
+
+  // 1. Save memories
+  const m1 = mgr.save({
+    nodeId: testNodeId,
+    type: 'project',
+    scope: 'private',
+    content: 'Building the JackClaw payment vault system with compliance checks',
+    tags: ['payment', 'vault'],
+  });
+  ok('Save memory returns id', typeof m1.id === 'string');
+
+  mgr.save({
+    nodeId: testNodeId,
+    type: 'feedback',
+    scope: 'private',
+    content: 'Always validate human token before approving payments',
+    why: 'Security requirement for payment flow',
+    tags: ['security'],
+  });
+
+  mgr.save({
+    nodeId: testNodeId,
+    type: 'user',
+    scope: 'private',
+    content: 'User prefers dark mode and minimal UI',
+    tags: ['preference'],
+  });
+
+  // 2. Query basic
+  const results = mgr.query(testNodeId, { type: 'project' });
+  ok('Query by type returns results', results.length >= 1);
+
+  // 3. Semantic query (TF-IDF, no embedder)
+  const semResults = await mgr.semanticQuery(testNodeId, 'payment security', 3);
+  ok('semanticQuery returns scored results', semResults.length >= 1 && typeof semResults[0].score === 'number');
+  ok('Top result is relevant (score > 0)', semResults[0].score > 0);
+
+  // 4. Stats
+  const stats = mgr.stats(testNodeId);
+  ok('Stats returns entry count', stats.totalEntries >= 3);
+
+  // Cleanup
+  for (const entry of mgr.query(testNodeId)) {
+    mgr.deleteFromNode(testNodeId, entry.id);
+  }
+}
+
+// ─── ClawChat Extended Tests ───────────────────────────────────
+
+async function testChatExtended() {
+  console.log('\n🔷 ClawChat: Extended');
+
+  // 1. Create thread + get messages
+  const r1 = await req('POST', '/api/chat/thread', {
+    participants: ['alice', 'bob'],
+    title: 'E2E Test Thread',
+  }, aliceToken);
+  ok('Create thread → 200', r1.s === 200);
+  const threadId = r1.b?.thread?.id;
+
+  // Send message to this thread
+  await req('POST', '/api/chat/send', {
+    id: `tmsg-${Date.now()}`,
+    from: 'alice',
+    to: 'bob',
+    content: 'Thread test message',
+    type: 'text',
+    ts: Date.now(),
+    threadId: threadId,
+    signature: '',
+    encrypted: false,
+  }, aliceToken);
+
+  const r2 = await req('GET', `/api/chat/thread/${threadId}`, null, aliceToken);
+  ok('Get thread messages → 200', r2.s === 200);
+
+  // 2. Create group
+  const r3 = await req('POST', '/api/chat/group/create', {
+    name: 'E2E Test Group',
+    members: ['ceo-jack', 'alice', 'bob'],
+    createdBy: 'ceo-jack',
+    topic: 'E2E Testing',
+  }, ceoToken);
+  ok('Create group → 200', r3.s === 200);
+  const groupId = r3.b?.group?.groupId;
+  ok('Group has groupId', typeof groupId === 'string');
+
+  // 3. Send message to group
+  const r4 = await req('POST', '/api/chat/send', {
+    id: `gmsg-${Date.now()}`,
+    from: 'alice',
+    to: groupId,
+    content: 'Group test message',
+    type: 'text',
+    ts: Date.now(),
+    signature: '',
+    encrypted: false,
+  }, aliceToken);
+  ok('Send to group → 200', r4.s === 200);
+
+  // 4. List groups for alice
+  const r5 = await req('GET', '/api/chat/groups?nodeId=alice', null, aliceToken);
+  ok('List groups → 200', r5.s === 200);
+  ok('Alice in ≥2 groups (original + e2e)', (r5.b?.groups?.length ?? 0) >= 2);
+}
+
 // ─── Runner ────────────────────────────────────────────────────
 
 async function run() {
@@ -354,6 +591,10 @@ async function run() {
     await testChatGroup();
     await testDirectory();
     await testCollaboration();
+    await testPaymentVault();
+    await testAskProxy();
+    await testMemorySearch();
+    await testChatExtended();
   } catch (err) {
     console.log(`\n💥 Fatal: ${err.message}`);
     console.log(err.stack);
