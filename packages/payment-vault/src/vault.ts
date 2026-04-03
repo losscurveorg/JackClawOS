@@ -29,6 +29,7 @@ import {
 export class PaymentVault {
   private config: PaymentVaultConfig
   private baseDir: string
+  readonly isSandboxMode: boolean
 
   /** In-memory index of active requests (persisted to JSONL on every mutation) */
   private requests = new Map<string, PaymentRequest>()
@@ -39,6 +40,13 @@ export class PaymentVault {
   constructor(config: PaymentVaultConfig) {
     this.config = config
     this.baseDir = config.vaultDir || VAULT_BASE_DEFAULT
+    this.isSandboxMode = process.env.PAYMENT_SANDBOX === 'true'
+  }
+
+  private warnSandbox(): void {
+    if (this.isSandboxMode) {
+      console.warn('[payment] SANDBOX MODE — no real payments')
+    }
   }
 
   // ── Compliance Engine ────────────────────────────────────────────────────────
@@ -103,6 +111,7 @@ export class PaymentVault {
   // ── Submit (Agent entry point) ─────────────────────────────────────────────
 
   submit(req: Omit<PaymentRequest, 'requestId' | 'status' | 'complianceResult' | 'humanApprovalRequired' | 'createdAt' | 'auditHash'>): PaymentRequest {
+    this.warnSandbox()
     const requestId = randomUUID()
 
     // Run compliance
@@ -143,6 +152,7 @@ export class PaymentVault {
   // ── Human Approve / Reject ─────────────────────────────────────────────────
 
   humanApprove(requestId: string, humanToken: string): PaymentRequest {
+    this.warnSandbox()
     const payment = this.getRequest(requestId)
     if (payment.status !== 'pending_human') {
       throw new Error(`Cannot approve: status is "${payment.status}", expected "pending_human"`)
@@ -161,6 +171,7 @@ export class PaymentVault {
   }
 
   humanReject(requestId: string, humanToken: string, reason: string): PaymentRequest {
+    this.warnSandbox()
     const payment = this.getRequest(requestId)
     if (payment.status !== 'pending_human') {
       throw new Error(`Cannot reject: status is "${payment.status}", expected "pending_human"`)
@@ -182,6 +193,7 @@ export class PaymentVault {
   // ── Execute (state-machine enforced) ───────────────────────────────────────
 
   execute(requestId: string): PaymentRequest {
+    this.warnSandbox()
     const payment = this.getRequest(requestId)
     if (payment.status !== 'approved') {
       throw new Error(
