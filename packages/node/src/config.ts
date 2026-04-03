@@ -13,6 +13,13 @@ export interface JackClawConfig {
     shareTasks: boolean        // allow Hub to assign tasks
     redactPatterns: string[]   // regex patterns to redact from reports
   }
+  ai: {
+    baseUrl: string            // API endpoint（支持中转站）
+    authToken: string          // Bearer token
+    model: string              // 默认模型
+    maxMemoryEntries: number   // 每次调用最多携带多少条 memory（SmartCache 压缩用）
+    cacheProbeInterval: number // 缓存能力探测间隔（ms，默认24h）
+  }
 }
 
 const CONFIG_DIR = path.join(os.homedir(), '.jackclaw')
@@ -27,6 +34,13 @@ const DEFAULTS: JackClawConfig = {
     shareMemory: true,
     shareTasks: true,
     redactPatterns: [],
+  },
+  ai: {
+    baseUrl: process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com',
+    authToken: process.env.ANTHROPIC_AUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY ?? '',
+    model: 'claude-sonnet-4-6',
+    maxMemoryEntries: 20,
+    cacheProbeInterval: 24 * 60 * 60 * 1000,
   },
 }
 
@@ -47,6 +61,10 @@ export function loadConfig(): JackClawConfig {
     visibility: {
       ...DEFAULTS.visibility,
       ...(user.visibility ?? {}),
+    },
+    ai: {
+      ...DEFAULTS.ai,
+      ...(user.ai ?? {}),
     },
   }
 }

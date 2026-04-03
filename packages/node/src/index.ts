@@ -5,6 +5,7 @@ import { createServer } from './server'
 import { registerWithHub, sendReportToHub } from './hub'
 import { buildDailyReport } from './reporter'
 import { createMessage } from '@jackclaw/protocol'
+import { getAiClient } from './ai-client'
 
 async function main() {
   console.log('🦞 JackClaw Node starting...')
@@ -29,6 +30,10 @@ async function main() {
     console.log(`[server] Listening on port ${config.port}`)
   })
 
+  // 3. Init AI client (probes cache capability on first call)
+  const aiClient = getAiClient(identity.nodeId, config)
+  console.log('[ai] AiClient initialized — cache probe will run on first call')
+
   // 3. Schedule daily report
   if (!cron.validate(config.reportCron)) {
     console.error(`[cron] Invalid cron expression: "${config.reportCron}", using default "0 8 * * *"`)
@@ -41,6 +46,15 @@ async function main() {
     console.log('[cron] Generating daily report...')
     try {
       const report = buildDailyReport(config)
+
+      // Append SmartCache savings to report
+      const savings = aiClient.getSavingsReport('today')
+      ;(report as any).tokenSavings = {
+        savedTokens: savings.totalSavedTokens,
+        savingsRate: `${(savings.savingsRate * 100).toFixed(1)}%`,
+        estimatedCostSaved: `$${savings.estimatedCostSaved.toFixed(4)}`,
+        strategy: savings.byStrategy,
+      }
 
       // Encrypt for Hub (if Hub public key available) or send plaintext wrapped
       const hubPublicKey: string | undefined = (config as any).hubPublicKey
