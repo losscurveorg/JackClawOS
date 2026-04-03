@@ -2,6 +2,13 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 
+export interface LLMProviderConfig {
+  apiKey?: string
+  baseUrl?: string
+  defaultModel?: string
+  enabled: boolean
+}
+
 export interface JackClawConfig {
   nodeId?: string              // override auto-derived ID
   nodeName?: string            // display name for this node
@@ -21,6 +28,23 @@ export interface JackClawConfig {
     model: string              // 默认模型
     maxMemoryEntries: number   // 每次调用最多携带多少条 memory（SmartCache 压缩用）
     cacheProbeInterval: number // 缓存能力探测间隔（ms，默认24h）
+  }
+  /** Multi-model LLM providers (via @jackclaw/llm-gateway) */
+  llm: {
+    defaultProvider: string
+    fallbackChain: string[]
+    providers: {
+      openai?:      LLMProviderConfig
+      anthropic?:   LLMProviderConfig
+      google?:      LLMProviderConfig
+      deepseek?:    LLMProviderConfig
+      groq?:        LLMProviderConfig
+      mistral?:     LLMProviderConfig
+      together?:    LLMProviderConfig
+      openrouter?:  LLMProviderConfig
+      ollama?:      LLMProviderConfig & { baseUrl: string }
+      [key: string]: LLMProviderConfig | undefined
+    }
   }
 }
 
@@ -43,6 +67,44 @@ const DEFAULTS: JackClawConfig = {
     model: 'claude-sonnet-4-6',
     maxMemoryEntries: 20,
     cacheProbeInterval: 24 * 60 * 60 * 1000,
+  },
+  llm: {
+    defaultProvider: 'anthropic',
+    fallbackChain: ['openai', 'deepseek', 'groq', 'ollama'],
+    providers: {
+      anthropic: {
+        enabled: true,
+        apiKey: process.env.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_AUTH_TOKEN ?? '',
+        baseUrl: process.env.ANTHROPIC_BASE_URL,
+        defaultModel: 'claude-sonnet-4-6',
+      },
+      openai: {
+        enabled: !!process.env.OPENAI_API_KEY,
+        apiKey: process.env.OPENAI_API_KEY ?? '',
+        defaultModel: 'gpt-4o-mini',
+      },
+      google: {
+        enabled: !!process.env.GOOGLE_API_KEY,
+        apiKey: process.env.GOOGLE_API_KEY ?? '',
+        defaultModel: 'gemini-2.0-flash',
+      },
+      deepseek: {
+        enabled: !!process.env.DEEPSEEK_API_KEY,
+        apiKey: process.env.DEEPSEEK_API_KEY ?? '',
+        defaultModel: 'deepseek-chat',
+      },
+      groq: {
+        enabled: !!process.env.GROQ_API_KEY,
+        apiKey: process.env.GROQ_API_KEY ?? '',
+        defaultModel: 'llama-3.3-70b-versatile',
+      },
+      ollama: {
+        enabled: false,
+        apiKey: '',
+        baseUrl: process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434',
+        defaultModel: 'llama3',
+      },
+    },
   },
 }
 
@@ -68,6 +130,14 @@ export function loadConfig(): JackClawConfig {
       ai: {
         ...DEFAULTS.ai,
         ...(user.ai ?? {}),
+      },
+      llm: {
+        ...DEFAULTS.llm,
+        ...(user.llm ?? {}),
+        providers: {
+          ...DEFAULTS.llm.providers,
+          ...(user.llm?.providers ?? {}),
+        },
       },
     }
   }

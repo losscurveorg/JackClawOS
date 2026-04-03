@@ -9,6 +9,7 @@ import { getAiClient } from './ai-client'
 import { NodeChatClient } from './chat-client'
 import { getOwnerMemory } from './owner-memory'
 import { MemoryManager, MemDirSync } from '@jackclaw/memory'
+import { createNodeGateway } from './llm-gateway'
 
 async function main() {
   console.log('🦞 JackClaw Node starting...')
@@ -26,6 +27,9 @@ async function main() {
   console.log(`[node] Node ID: ${identity.nodeId}`)
   console.log(`[node] Hub: ${config.hubUrl}`)
   console.log(`[node] Port: ${config.port}`)
+
+  // 0. Initialize LLM Gateway
+  const gateway = createNodeGateway(config)
 
   // 1. Register with Hub (best-effort, non-blocking)
   await registerWithHub(identity, config)

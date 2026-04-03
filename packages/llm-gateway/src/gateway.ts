@@ -1,0 +1,223 @@
+/**
+ * LLMGateway — Routes requests to the right provider
+ *
+ * Features:
+ * - Auto-detect provider from model name
+ * - Fallback chain (try next on error)
+ * - Cost estimation
+ * - Request logging
+ */
+import type {
+  LLMProvider, ChatRequest, ChatResponse,
+  GatewayConfig, ProviderConfig
+} from './types.js'
+import { OpenAICompatibleProvider } from './providers/openai-compatible.js'
+import { AnthropicProvider } from './providers/anthropic.js'
+import { GoogleProvider } from './providers/google.js'
+
+// ─── Cost per 1M tokens (USD) ────────────────────────────────────────
+const PRICE_TABLE: Record<string, { input: number; output: number }> = {
+  // OpenAI
+  'gpt-4o':              { input: 5.00,   output: 15.00 },
+  'gpt-4o-mini':         { input: 0.15,   output: 0.60  },
+  'o1':                  { input: 15.00,  output: 60.00 },
+  'o3-mini':             { input: 1.10,   output: 4.40  },
+  // Anthropic
+  'claude-opus-4':       { input: 15.00,  output: 75.00 },
+  'claude-sonnet-4-6':   { input: 3.00,   output: 15.00 },
+  'claude-haiku-3-5':    { input: 0.80,   output: 4.00  },
+  // Google
+  'gemini-2.0-flash':    { input: 0.075,  output: 0.30  },
+  'gemini-1.5-pro':      { input: 1.25,   output: 5.00  },
+  'gemini-1.5-flash':    { input: 0.075,  output: 0.30  },
+  // DeepSeek
+  'deepseek-chat':       { input: 0.27,   output: 1.10  },
+  'deepseek-reasoner':   { input: 0.55,   output: 2.19  },
+  // Groq (free tier, very cheap)
+  'llama-3.3-70b-versatile':    { input: 0.59,  output: 0.79 },
+  'mixtral-8x7b-32768':         { input: 0.24,  output: 0.24 },
+  // Ollama (local = free)
+  'llama3':              { input: 0, output: 0 },
+  'mistral':             { input: 0, output: 0 },
+  'qwen2.5':             { input: 0, output: 0 },
+}
+
+export interface GatewayStats {
+  totalRequests: number
+  totalTokens: number
+  totalCostUsd: number
+  byProvider: Record<string, { requests: number; tokens: number; costUsd: number }>
+}
+
+export class LLMGateway {
+  private providers = new Map<string, LLMProvider>()
+  private config: GatewayConfig
+  private stats: GatewayStats = {
+    totalRequests: 0, totalTokens: 0, totalCostUsd: 0, byProvider: {}
+  }
+
+  constructor(config: GatewayConfig) {
+    this.config = config
+    for (const pc of config.providers) {
+      this.providers.set(pc.provider, this.createProvider(pc))
+    }
+  }
+
+  // ─── Main entry point ─────────────────────────────────────────────
+
+  async chat(request: ChatRequest): Promise<ChatResponse> {
+    const provider = this.resolveProvider(request.model)
+    const chain = this.config.fallbackChain ?? []
+
+    // Try primary provider
+    try {
+      return await this.chatWithProvider(provider, request)
+    } catch (err: any) {
+      if (!chain.length) throw err
+      console.warn(`[gateway] ${provider.name} failed: ${err.message}. Trying fallback chain...`)
+    }
+
+    // Fallback chain
+    for (const fallbackName of chain) {
+      const fallback = this.providers.get(fallbackName)
+      if (!fallback || fallback === provider) continue
+      try {
+        console.log(`[gateway] Trying fallback: ${fallbackName}`)
+        return await this.chatWithProvider(fallback, request)
+      } catch (err: any) {
+        console.warn(`[gateway] ${fallbackName} also failed: ${err.message}`)
+      }
+    }
+
+    throw new Error(`[gateway] All providers failed for model: ${request.model}`)
+  }
+
+  // ─── Provider resolution ──────────────────────────────────────────
+
+  resolveProvider(model: string): LLMProvider {
+    // 1. Explicit routing rules
+    if (this.config.routing) {
+      for (const rule of this.config.routing) {
+        if (new RegExp(rule.pattern, 'i').test(model)) {
+          const p = this.providers.get(rule.provider)
+          if (p) return p
+        }
+      }
+    }
+
+    // 2. Model-prefix auto-detect
+    if (model.startsWith('claude'))      return this.get('anthropic')
+    if (model.startsWith('gemini'))      return this.get('google')
+    if (model.startsWith('gpt') || model.startsWith('o1') || model.startsWith('o3'))
+                                          return this.get('openai')
+    if (model.startsWith('deepseek'))    return this.get('deepseek')
+    if (model.startsWith('llama') || model.startsWith('mixtral') || model.startsWith('gemma'))
+                                          return this.get('groq') ?? this.get('ollama') ?? this.getDefault()
+    if (model.startsWith('qwen') || model.startsWith('yi') || model.startsWith('moonshot'))
+                                          return this.get('openrouter') ?? this.getDefault()
+
+    // 3. Default
+    return this.getDefault()
+  }
+
+  // ─── Convenience shortcuts ────────────────────────────────────────
+
+  /** Fastest cheap model: GPT-4o-mini / Gemini Flash / DeepSeek */
+  async fast(prompt: string, systemPrompt?: string): Promise<string> {
+    const model = this.pickModel(['gpt-4o-mini', 'gemini-2.0-flash', 'deepseek-chat', 'llama3'])
+    return this.simple(model, prompt, systemPrompt)
+  }
+
+  /** Best quality: GPT-4o / Claude Sonnet / Gemini Pro */
+  async smart(prompt: string, systemPrompt?: string): Promise<string> {
+    const model = this.pickModel(['gpt-4o', 'claude-sonnet-4-6', 'gemini-1.5-pro'])
+    return this.simple(model, prompt, systemPrompt)
+  }
+
+  /** Free local (Ollama) — fastest, no API cost */
+  async local(prompt: string, model = 'llama3', systemPrompt?: string): Promise<string> {
+    return this.simple(model, prompt, systemPrompt)
+  }
+
+  /** Get text content from chat response */
+  async simple(model: string, prompt: string, systemPrompt?: string): Promise<string> {
+    const messages = systemPrompt
+      ? [{ role: 'system' as const, content: systemPrompt }, { role: 'user' as const, content: prompt }]
+      : [{ role: 'user' as const, content: prompt }]
+    const resp = await this.chat({ model, messages })
+    return resp.choices[0]?.message.content ?? ''
+  }
+
+  // ─── Stats & cost ─────────────────────────────────────────────────
+
+  getStats(): GatewayStats { return { ...this.stats } }
+
+  estimateCost(model: string, promptTokens: number, completionTokens: number): number {
+    // Fuzzy match
+    const key = Object.keys(PRICE_TABLE).find(k => model.includes(k) || k.includes(model.split('-').slice(0,2).join('-')))
+    if (!key) return 0
+    const p = PRICE_TABLE[key]
+    return (promptTokens * p.input + completionTokens * p.output) / 1_000_000
+  }
+
+  // ─── Provider management ──────────────────────────────────────────
+
+  addProvider(config: ProviderConfig): void {
+    this.providers.set(config.provider, this.createProvider(config))
+  }
+
+  listProviders(): string[] {
+    return [...this.providers.keys()]
+  }
+
+  async pingAll(): Promise<Record<string, boolean>> {
+    const results: Record<string, boolean> = {}
+    await Promise.all([...this.providers.entries()].map(async ([name, p]) => {
+      results[name] = await p.ping().catch(() => false)
+    }))
+    return results
+  }
+
+  // ─── Private helpers ──────────────────────────────────────────────
+
+  private async chatWithProvider(provider: LLMProvider, request: ChatRequest): Promise<ChatResponse> {
+    const resp = await provider.chat(request)
+    // Track stats
+    this.stats.totalRequests++
+    this.stats.totalTokens += resp.usage.total_tokens
+    const cost = this.estimateCost(request.model, resp.usage.prompt_tokens, resp.usage.completion_tokens)
+    this.stats.totalCostUsd += cost
+    const ps = this.stats.byProvider[provider.name] ?? { requests: 0, tokens: 0, costUsd: 0 }
+    ps.requests++; ps.tokens += resp.usage.total_tokens; ps.costUsd += cost
+    this.stats.byProvider[provider.name] = ps
+    return resp
+  }
+
+  private pickModel(candidates: string[]): string {
+    for (const m of candidates) {
+      const p = this.resolveProvider(m)
+      if (p) return m
+    }
+    return candidates[0]
+  }
+
+  private get(name: string): LLMProvider {
+    const p = this.providers.get(name)
+    if (!p) throw new Error(`[gateway] Provider not configured: ${name}`)
+    return p
+  }
+
+  private getDefault(): LLMProvider {
+    const name = this.config.defaultProvider ?? [...this.providers.keys()][0]
+    if (!name) throw new Error('[gateway] No providers configured')
+    return this.providers.get(name)!
+  }
+
+  private createProvider(config: ProviderConfig): LLMProvider {
+    switch (config.provider) {
+      case 'anthropic': return new AnthropicProvider(config)
+      case 'google':    return new GoogleProvider(config)
+      default:          return new OpenAICompatibleProvider(config)
+    }
+  }
+}
