@@ -1,11 +1,13 @@
 import cron from 'node-cron'
 import { loadConfig } from './config'
 import { loadOrCreateIdentity } from './identity'
-import { createServer, registerHarnessRunner } from './server'
+import { createServer, registerHarnessRunner, handleTask } from './server'
 import { registerWithHub, sendReportToHub } from './hub'
 import { buildDailyReport } from './reporter'
 import { createMessage } from '@jackclaw/protocol'
 import { getAiClient } from './ai-client'
+import { NodeChatClient } from './chat-client'
+import { getOwnerMemory } from './owner-memory'
 
 async function main() {
   console.log('🦞 JackClaw Node starting...')
@@ -23,6 +25,24 @@ async function main() {
 
   // 1. Register with Hub (best-effort, non-blocking)
   await registerWithHub(identity, config)
+
+  // 1b. Connect NodeChatClient to Hub ClawChat
+  const ownerMemory = getOwnerMemory(identity.nodeId)
+  const chatClient = new NodeChatClient(identity.nodeId, config.hubUrl)
+
+  chatClient.onMessage((msg) => {
+    if (msg.type === 'task') {
+      handleTask(
+        { taskId: msg.id, action: 'ai', params: { prompt: msg.content, title: `chat:${msg.id}` } },
+        identity,
+        config,
+      )
+    } else if (msg.type === 'human') {
+      ownerMemory.observeMessage({ content: msg.content, direction: 'incoming', type: msg.type })
+    }
+  })
+
+  chatClient.connect()
 
   // 2. Start HTTP server
   const app = createServer(identity, config)
@@ -100,10 +120,12 @@ async function main() {
   // 4. Graceful shutdown
   process.on('SIGTERM', () => {
     console.log('[node] SIGTERM received, shutting down.')
+    chatClient.stop()
     process.exit(0)
   })
   process.on('SIGINT', () => {
     console.log('[node] SIGINT received, shutting down.')
+    chatClient.stop()
     process.exit(0)
   })
 

@@ -112,7 +112,7 @@ export function createServer(identity: NodeIdentity, config: JackClawConfig) {  
   return app
 }
 
-function handleTask(task: TaskPayload, identity: NodeIdentity, config: JackClawConfig): void {
+export function handleTask(task: TaskPayload, identity: NodeIdentity, config: JackClawConfig): void {
   console.log(`[task] Handling task ${task.taskId}: ${task.action}`, task.params)
 
   // 所有 harness/ai 任务先自动规划，打印计划后再执行
