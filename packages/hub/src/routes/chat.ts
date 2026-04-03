@@ -14,6 +14,7 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { IncomingMessage } from 'http'
 import { ChatStore } from '../store/chat'
 import type { ChatMessage, ChatGroup } from '../store/chat'
+import { isHumanTarget, getHuman, pushToHuman } from '../store/human-registry'
 
 const router = Router()
 const store = new ChatStore()
@@ -48,6 +49,18 @@ router.post('/send', (req: Request, res: Response) => {
     const payload = group
       ? { ...msg, groupId: group.groupId, groupName: group.name }
       : msg
+
+    // Human 账号：webhook 推送
+    if (isHumanTarget(target)) {
+      const human = getHuman(target)
+      if (human) {
+        pushToHuman(human, { from: msg.from, content: msg.content, type: msg.type, id: msg.id })
+          .catch(() => {})
+      }
+      continue
+    }
+
+    // Agent Node：WebSocket
     const ws = wsClients.get(target)
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ event: 'message', data: payload }))
@@ -122,6 +135,24 @@ router.get('/groups', (req: Request, res: Response) => {
   res.json({ groups: store.listGroups(nodeId) })
 })
 
+// POST /chat/human/register — 注册人类账号（humanId + webhookUrl）
+// 之后发消息时 to: ["bob-human", "bob-node"] 即可同时送达人和 AI
+import { registerHuman, listHumans } from '../store/human-registry'
+
+router.post('/human/register', (req: Request, res: Response) => {
+  const { humanId, displayName, agentNodeId, webhookUrl, feishuOpenId } = req.body ?? {}
+  if (!humanId || !displayName) {
+    res.status(400).json({ error: 'humanId and displayName required' })
+    return
+  }
+  const human = registerHuman({ humanId, displayName, agentNodeId, webhookUrl, feishuOpenId })
+  res.json({ status: 'ok', human })
+})
+
+router.get('/humans', (_req: Request, res: Response) => {
+  res.json({ humans: listHumans() })
+})
+
 export { router as chatRouter }
 
 // ─── WebSocket 服务 ───────────────────────────────────────────────────────────
@@ -166,6 +197,17 @@ export function attachChatWss(server: import('http').Server): WebSocketServer {
           const payload = group
             ? { ...msg, groupId: group.groupId, groupName: group.name }
             : msg
+
+          // Human 账号：走 webhook 推送（手机/飞书/ClawChat App）
+          if (isHumanTarget(target)) {
+            const human = getHuman(target)
+            if (human) {
+              setImmediate(() => pushToHuman(human, { from: msg.from, content: msg.content, type: msg.type, id: msg.id }))
+            }
+            continue
+          }
+
+          // Agent Node：走 WebSocket
           const targetWs = wsClients.get(target)
           if (targetWs && targetWs.readyState === WebSocket.OPEN) {
             targetWs.send(JSON.stringify({ event: 'message', data: payload }))
