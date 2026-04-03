@@ -179,8 +179,8 @@ High-stakes actions always require L0 human approval regardless of the Node's au
 
 ```bash
 # Clone and install
-git clone https://github.com/your-org/orgclaw.git
-cd orgclaw
+git clone https://github.com/mackding/jackclaw.git
+cd jackclaw
 npm install
 
 # Configure environment
