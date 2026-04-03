@@ -143,6 +143,9 @@ export function createServer(): Application {
   // Public: node registration (no JWT required — nodes need a token first)
   app.use('/api/register', registerRoute)
 
+  // Public: ClawChat (nodes authenticate via WebSocket nodeId)
+  app.use('/api/chat', chatRouter)
+
   // Protected: all other routes require JWT
   app.use('/api/', jwtAuthMiddleware)
   app.use('/api/report', reportRoute)
@@ -158,7 +161,6 @@ export function createServer(): Application {
   app.use('/api/teach', teachRoute)
   app.use('/api/org-norm', orgNormRoute)
   app.use('/api/org-memory', orgMemoryRoute)
-  app.use('/api/chat', chatRouter)   // ClawChat REST
 
   // 404 handler
   app.use((_req: Request, res: Response) => {
