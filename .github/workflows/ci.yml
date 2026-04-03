@@ -26,3 +26,8 @@ jobs:
       - run: npm run build
       - run: npm run typecheck
       - run: npm test
+
+      - name: E2E Integration Tests
+        run: |
+          rm -rf ~/.jackclaw/hub
+          node tests/e2e.js

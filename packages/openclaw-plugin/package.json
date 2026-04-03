@@ -15,6 +15,9 @@
   "dependencies": {
     "@jackclaw/protocol": "^0.1.0"
   },
+  "peerDependencies": {
+    "openclaw": ">=2026.3.28"
+  },
   "devDependencies": {
     "openclaw": "file:/opt/homebrew/lib/node_modules/openclaw",
     "typescript": "^5.4.0",
