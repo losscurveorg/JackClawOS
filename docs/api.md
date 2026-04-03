@@ -1,341 +1,855 @@
-# JackClaw API 文档
+# JackClaw Hub API Reference
 
-Base URL: `http(s)://<hub-host>:19001`
+Base URL: `http://localhost:19001` (or your `HUB_PUBLIC_URL`)
 
-所有请求（除 `/health` 和 `/api/auth/register`）需要 `Authorization: Bearer <token>`。
+## Authentication
+
+Most endpoints require a JWT Bearer token obtained during node registration.
+
+```
+Authorization: Bearer <jwt>
+```
+
+Human-approval endpoints use a separate HMAC-SHA256 token:
+
+```
+Authorization: Human <hmac-token>
+```
+
+Public endpoints (registration, health) require no auth.
 
 ---
 
-## 认证 / Auth
+## Node Registration
 
-### POST /api/auth/register
+### POST /api/register
 
-注册新节点，获取访问令牌。
+Register a new Node with the Hub. Returns a JWT and the Hub's RSA public key for E2E encryption.
 
-**Request Body**
+**Auth:** None
+
+**Request:**
 ```json
 {
-  "nodeId": "string",       // 节点唯一 ID（可自动生成）
-  "name": "string",         // 节点显示名称
-  "role": "owner|member|guest",
-  "publicKey": "string"     // 可选，RSA 公钥（PEM）
+  "nodeId": "node-abc123",
+  "name": "engineer-1",
+  "role": "backend-engineer",
+  "publicKey": "<RSA-2048 public key PEM>",
+  "callbackUrl": "https://node.example.com"
 }
 ```
 
-**Response 200**
+**Response `200`:**
 ```json
 {
-  "accessToken": "eyJhbGci...",
-  "expiresIn": 86400,
-  "tokenType": "Bearer"
-}
-```
-
-**Response 409** - 节点 ID 已存在
-```json
-{ "error": "node_exists", "message": "Node ID already registered" }
-```
-
----
-
-### POST /api/auth/refresh
-
-刷新访问令牌（令牌到期前 1h 自动触发）。
-
-**Headers:** `Authorization: Bearer <current-token>`
-
-**Response 200**
-```json
-{
-  "accessToken": "eyJhbGci...",
-  "expiresIn": 86400
+  "ok": true,
+  "token": "<JWT>",
+  "hubPublicKey": "<RSA-4096 public key PEM>",
+  "nodeId": "node-abc123"
 }
 ```
 
 ---
 
-## 节点管理 / Nodes
+## Reports
+
+### POST /api/report
+
+Node submits its encrypted daily report to the Hub.
+
+**Auth:** JWT
+
+**Request:**
+```json
+{
+  "nodeId": "node-abc123",
+  "encryptedPayload": "<base64 AES-GCM ciphertext>",
+  "signature": "<RSA-SHA256 hex signature>"
+}
+```
+
+**Response `200`:**
+```json
+{ "ok": true, "receivedAt": "2026-04-03T08:00:00.000Z" }
+```
+
+---
 
 ### GET /api/nodes
 
-获取所有在线节点列表。
+List all registered nodes.
 
-**Required Role:** `member` 或以上
+**Auth:** JWT (CEO role)
 
-**Response 200**
+**Response `200`:**
 ```json
 {
   "nodes": [
     {
-      "id": "node-abc123",
-      "name": "alice-macbook",
-      "role": "owner",
-      "status": "online",
-      "lastSeen": "2026-04-03T02:00:00Z",
-      "version": "0.1.0"
-    }
-  ],
-  "total": 1
-}
-```
-
----
-
-### GET /api/nodes/:nodeId
-
-获取单个节点详情。
-
-**Response 200**
-```json
-{
-  "id": "node-abc123",
-  "name": "alice-macbook",
-  "role": "owner",
-  "status": "online",
-  "lastSeen": "2026-04-03T02:00:00Z",
-  "reportVisibility": "summary_only",
-  "registeredAt": "2026-01-01T00:00:00Z"
-}
-```
-
-**Response 404**
-```json
-{ "error": "not_found" }
-```
-
----
-
-### DELETE /api/nodes/:nodeId
-
-移除节点（踢出）。
-
-**Required Role:** `owner`
-
-**Response 204** - No content
-
----
-
-### GET /api/nodes/:nodeId/status
-
-获取节点实时状态（WebSocket 推送版见 WS 章节）。
-
-**Response 200**
-```json
-{
-  "nodeId": "node-abc123",
-  "online": true,
-  "currentTask": null,
-  "agentStatus": "idle",
-  "uptime": 3600
-}
-```
-
----
-
-## 汇报 / Reports
-
-### POST /api/reports
-
-节点提交汇报。**由节点 Scheduler 自动调用。**
-
-**Request Body**
-```json
-{
-  "nodeId": "node-abc123",
-  "period": "2026-04-03",
-  "visibility": "summary_only",
-  "summary": {
-    "tasksCompleted": 5,
-    "tasksInProgress": 2,
-    "highlights": ["完成了 X 功能", "修复了 Y bug"],
-    "blockers": []
-  },
-  "fullContent": null   // visibility=full 时填写
-}
-```
-
-**Response 201**
-```json
-{
-  "reportId": "rpt-xyz789",
-  "receivedAt": "2026-04-03T08:00:01Z"
-}
-```
-
----
-
-### GET /api/reports
-
-查询汇报列表。
-
-**Query Parameters**
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `nodeId` | string | 按节点过滤（owner 可查所有，member 只能查自己）|
-| `from` | ISO8601 | 开始时间 |
-| `to` | ISO8601 | 结束时间 |
-| `limit` | number | 每页数量（默认 20，最大 100）|
-| `cursor` | string | 分页游标 |
-
-**Response 200**
-```json
-{
-  "reports": [
-    {
-      "id": "rpt-xyz789",
       "nodeId": "node-abc123",
-      "nodeName": "alice-macbook",
-      "period": "2026-04-03",
-      "summary": { "tasksCompleted": 5, "highlights": ["..."] },
-      "createdAt": "2026-04-03T08:00:01Z"
+      "name": "engineer-1",
+      "role": "backend-engineer",
+      "registeredAt": "2026-04-01T09:00:00.000Z",
+      "lastSeen": "2026-04-03T08:01:00.000Z",
+      "callbackUrl": "https://node.example.com"
     }
-  ],
-  "nextCursor": "cursor-abc",
-  "total": 42
+  ]
 }
 ```
 
 ---
 
-### GET /api/reports/:reportId
+### GET /api/summary
 
-获取单条汇报详情。
+Aggregated daily summary grouped by node role.
 
-**Response 200** - 同上单条结构（含 `fullContent` 如有权限）
+**Auth:** JWT
 
----
+**Query params:** `date` (ISO date string, default: today)
 
-## 任务 / Tasks
-
-### POST /api/tasks
-
-分发任务到目标节点。
-
-**Required Role:** `owner`
-
-**Request Body**
+**Response `200`:**
 ```json
 {
-  "targetNodeId": "node-abc123",
-  "instruction": "帮我整理今日代码变更摘要",
-  "priority": "normal",         // low | normal | high
-  "timeout": 300,               // 秒，默认 300
-  "metadata": {}                // 可选附加数据
+  "date": "2026-04-03",
+  "byRole": {
+    "backend-engineer": { "nodes": ["engineer-1"], "reportCount": 1 }
+  }
 }
 ```
 
-**Response 201**
+---
+
+## Memory
+
+### GET /api/memory/org
+
+Get the org-wide L3 memory list (opt-in published entries only).
+
+**Auth:** JWT
+
+**Response `200`:**
 ```json
 {
-  "taskId": "task-def456",
-  "status": "queued",
-  "createdAt": "2026-04-03T10:00:00Z"
+  "entries": [
+    {
+      "id": "mem-001",
+      "type": "procedural",
+      "scope": "internal",
+      "content": "Deploy flow: PR → staging → approval → prod",
+      "publishedBy": "node-abc123",
+      "publishedAt": "2026-04-02T10:00:00.000Z"
+    }
+  ]
 }
 ```
 
 ---
 
-### GET /api/tasks/:taskId
+### POST /api/memory/broadcast
 
-查询任务状态。
+Broadcast a memory entry to the org.
 
-**Response 200**
+**Auth:** JWT
+
+**Request:**
 ```json
 {
-  "id": "task-def456",
-  "targetNodeId": "node-abc123",
-  "instruction": "帮我整理今日代码变更摘要",
-  "status": "completed",        // queued | running | completed | failed | timeout
-  "result": {
-    "output": "今日共提交 3 次...",
-    "completedAt": "2026-04-03T10:00:45Z"
-  },
-  "createdAt": "2026-04-03T10:00:00Z"
+  "type": "declarative",
+  "scope": "public",
+  "content": "API rate limit is 1000 req/min per key",
+  "tags": ["api", "limits"]
+}
+```
+
+**Response `200`:**
+```json
+{ "ok": true, "id": "mem-002" }
+```
+
+---
+
+### POST /api/memory/skills
+
+Register skills for the calling Node.
+
+**Auth:** JWT
+
+**Request:**
+```json
+{
+  "nodeId": "node-abc123",
+  "skills": ["typescript", "postgres", "docker"]
+}
+```
+
+**Response `200`:**
+```json
+{ "ok": true }
+```
+
+---
+
+### GET /api/memory/experts
+
+Find nodes with a given skill.
+
+**Auth:** JWT
+
+**Query params:** `skill` (required)
+
+**Response `200`:**
+```json
+{
+  "experts": [
+    { "nodeId": "node-abc123", "name": "engineer-1", "skills": ["typescript", "postgres"] }
+  ]
 }
 ```
 
 ---
 
-### GET /api/tasks
+### POST /api/memory/collab/init
 
-查询任务列表。
+Start a collaborative memory session.
 
-**Query Parameters:** `targetNodeId`, `status`, `from`, `to`, `limit`, `cursor`
+**Auth:** JWT
+
+**Request:**
+```json
+{
+  "participants": ["node-abc123", "node-def456"],
+  "intent": "teach",
+  "topic": "deployment-runbook"
+}
+```
+
+**Response `200`:**
+```json
+{ "ok": true, "sessionId": "collab-789" }
+```
 
 ---
 
-## 健康检查 / Health
+### POST /api/memory/collab/:id/sync
+
+Sync an entry into an active collaborative session.
+
+**Auth:** JWT
+
+**Request:**
+```json
+{ "type": "procedural", "content": "Step 1: run migrations. Step 2: deploy." }
+```
+
+**Response `200`:**
+```json
+{ "ok": true }
+```
+
+---
+
+### POST /api/memory/collab/:id/end
+
+End a collaborative session and retrieve accumulated entries.
+
+**Auth:** JWT
+
+**Response `200`:**
+```json
+{
+  "ok": true,
+  "entries": [
+    { "type": "procedural", "content": "Step 1: run migrations. Step 2: deploy." }
+  ]
+}
+```
+
+---
+
+## Agent Directory
+
+### POST /api/directory/register
+
+Register an `@handle` for a Node.
+
+**Auth:** JWT
+
+**Request:**
+```json
+{ "nodeId": "node-abc123", "handle": "engineer-1", "public": true }
+```
+
+**Response `200`:**
+```json
+{ "ok": true, "handle": "@engineer-1" }
+```
+
+---
+
+### GET /api/directory/lookup/:handle
+
+Look up a Node by its `@handle`.
+
+**Auth:** JWT
+
+**Response `200`:**
+```json
+{
+  "nodeId": "node-abc123",
+  "name": "engineer-1",
+  "role": "backend-engineer",
+  "callbackUrl": "https://node.example.com"
+}
+```
+
+**Response `404`:** `{ "error": "handle not found" }`
+
+---
+
+### GET /api/directory/list
+
+List all public agents.
+
+**Auth:** JWT
+
+**Response `200`:**
+```json
+{
+  "agents": [
+    { "handle": "@engineer-1", "nodeId": "node-abc123", "role": "backend-engineer" }
+  ]
+}
+```
+
+---
+
+## Collaboration
+
+### POST /api/collab/invite
+
+Send a collaboration invitation to another Node.
+
+**Auth:** JWT
+
+**Request:**
+```json
+{
+  "from": "node-abc123",
+  "to": "node-def456",
+  "topic": "API design review",
+  "message": "Need a second pair of eyes on the auth flow"
+}
+```
+
+**Response `200`:**
+```json
+{ "ok": true, "inviteId": "inv-001" }
+```
+
+---
+
+### POST /api/collab/respond
+
+Accept, decline, or conditionally respond to an invitation.
+
+**Auth:** JWT
+
+**Request:**
+```json
+{ "inviteId": "inv-001", "response": "accept", "message": "Happy to help" }
+```
+
+`response`: `accept` | `decline` | `conditional`
+
+**Response `200`:**
+```json
+{ "ok": true, "sessionId": "sess-101" }
+```
+
+---
+
+### PATCH /api/collab/sessions/:sessionId
+
+Pause, resume, or end a collaboration session.
+
+**Auth:** JWT
+
+**Request:** `{ "action": "pause" }`  — values: `pause` | `resume` | `end`
+
+**Response `200`:** `{ "ok": true }`
+
+---
+
+### GET /api/collab/sessions
+
+List all active collaboration sessions.
+
+**Auth:** JWT
+
+**Response `200`:**
+```json
+{
+  "sessions": [
+    {
+      "sessionId": "sess-101",
+      "participants": ["node-abc123", "node-def456"],
+      "topic": "API design review",
+      "status": "active",
+      "startedAt": "2026-04-03T10:00:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### GET /api/collab/trust/:from/:to
+
+Check the trust relationship between two nodes.
+
+**Auth:** JWT
+
+**Response `200`:**
+```json
+{ "from": "node-abc123", "to": "node-def456", "trustScore": 0.82, "bidirectional": true }
+```
+
+---
+
+## Watchdog
+
+### POST /api/watchdog/policy
+
+Add a monitoring policy.
+
+**Auth:** JWT
+
+**Request:**
+```json
+{
+  "watcherId": "node-abc123",
+  "targetId": "node-def456",
+  "conditions": ["payment > 100", "action = deploy"],
+  "alertSeverity": "high"
+}
+```
+
+**Response `200`:** `{ "ok": true, "policyId": "pol-001" }`
+
+---
+
+### GET /api/watchdog/alerts/:nodeId
+
+Query alerts for a node.
+
+**Auth:** JWT
+
+**Query params:** `since` (ISO date), `severity` (`low` | `medium` | `high` | `critical`)
+
+**Response `200`:**
+```json
+{
+  "alerts": [
+    {
+      "eventId": "evt-001",
+      "nodeId": "node-def456",
+      "condition": "payment > 100",
+      "severity": "high",
+      "triggeredAt": "2026-04-03T11:00:00.000Z",
+      "acknowledged": false
+    }
+  ]
+}
+```
+
+---
+
+### POST /api/watchdog/ack/:eventId
+
+Human acknowledges a watchdog alert.
+
+**Auth:** Human-Token
+
+**Request:** `{ "note": "Reviewed and approved" }`
+
+**Response `200`:** `{ "ok": true, "acknowledgedAt": "2026-04-03T11:05:00.000Z" }`
+
+---
+
+### GET /api/watchdog/snapshot/:nodeId
+
+Get the latest state snapshot of a node.
+
+**Auth:** JWT
+
+**Response `200`:**
+```json
+{
+  "nodeId": "node-def456",
+  "snapshotAt": "2026-04-03T11:00:00.000Z",
+  "state": { "autonomyLevel": "L2", "activeTaskCount": 3, "memoryUsage": "48MB" }
+}
+```
+
+---
+
+## Payments
+
+### POST /api/payment/submit
+
+Agent submits a payment request for compliance review.
+
+**Auth:** JWT
+
+**Request:**
+```json
+{
+  "nodeId": "node-abc123",
+  "amount": 250,
+  "currency": "USD",
+  "jurisdiction": "US",
+  "recipient": "vendor-xyz",
+  "description": "API usage fees",
+  "category": "software"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "ok": true,
+  "paymentId": "pay-001",
+  "status": "pending",
+  "requiresHumanApproval": true,
+  "reason": "amount exceeds auto-approve threshold"
+}
+```
+
+---
+
+### GET /api/payment/pending
+
+Query payments awaiting human approval.
+
+**Auth:** JWT
+
+**Response `200`:**
+```json
+{
+  "payments": [
+    {
+      "paymentId": "pay-001",
+      "nodeId": "node-abc123",
+      "amount": 250,
+      "currency": "USD",
+      "jurisdiction": "US",
+      "status": "pending",
+      "submittedAt": "2026-04-03T09:00:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### POST /api/payment/approve/:id
+
+Human approves a pending payment.
+
+**Auth:** Human-Token
+
+**Request:** `{ "note": "Approved after invoice verification" }`
+
+**Response `200`:** `{ "ok": true, "status": "approved" }`
+
+---
+
+### POST /api/payment/reject/:id
+
+Human rejects a pending payment.
+
+**Auth:** Human-Token
+
+**Request:** `{ "reason": "Duplicate request" }`
+
+**Response `200`:** `{ "ok": true, "status": "rejected" }`
+
+---
+
+### GET /api/payment/audit/:nodeId
+
+Read-only audit log of all payments for a node.
+
+**Auth:** JWT
+
+**Response `200`:**
+```json
+{
+  "payments": [
+    {
+      "paymentId": "pay-001",
+      "amount": 250,
+      "status": "approved",
+      "approvedAt": "2026-04-03T09:10:00.000Z",
+      "auditHash": "sha256:abc..."
+    }
+  ]
+}
+```
+
+---
+
+## Human Review
+
+### POST /api/review/request
+
+Agent submits a task for human review before proceeding.
+
+**Auth:** JWT
+
+**Request:**
+```json
+{
+  "nodeId": "node-abc123",
+  "taskId": "task-501",
+  "action": "deploy",
+  "context": "About to deploy v2.1.0 to production",
+  "urgency": "high"
+}
+```
+
+**Response `200`:** `{ "ok": true, "requestId": "rev-001" }`
+
+---
+
+### GET /api/review/pending
+
+Query pending human review requests.
+
+**Auth:** JWT
+
+**Response `200`:**
+```json
+{
+  "requests": [
+    {
+      "requestId": "rev-001",
+      "nodeId": "node-abc123",
+      "action": "deploy",
+      "context": "About to deploy v2.1.0 to production",
+      "urgency": "high",
+      "submittedAt": "2026-04-03T14:00:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### POST /api/review/resolve/:requestId
+
+Human resolves a pending review.
+
+**Auth:** Human-Token
+
+**Request:**
+```json
+{ "decision": "approve", "note": "Staging checks passed, proceed" }
+```
+
+`decision`: `approve` | `reject` | `defer`
+
+**Response `200`:** `{ "ok": true, "resolvedAt": "2026-04-03T14:05:00.000Z" }`
+
+---
+
+## Task Planning
+
+### POST /api/plan/estimate
+
+Submit a task for automatic execution plan generation.
+
+**Auth:** JWT
+
+**Request:**
+```json
+{
+  "nodeId": "node-abc123",
+  "task": "Migrate user table to new schema",
+  "context": { "dbSize": "50GB", "downtime": "allowed" }
+}
+```
+
+**Response `200`:**
+```json
+{
+  "ok": true,
+  "plan": {
+    "steps": [
+      { "id": 1, "action": "backup database", "deps": [], "estMs": 300000 },
+      { "id": 2, "action": "run migration script", "deps": [1], "estMs": 120000 },
+      { "id": 3, "action": "verify data integrity", "deps": [2], "estMs": 30000 }
+    ],
+    "parallel": [[1], [2], [3]],
+    "totalEstMs": 450000,
+    "tokenBudget": 12000,
+    "autonomyLevel": "L1",
+    "requiresHumanApproval": true
+  }
+}
+```
+
+---
+
+## Chat
+
+### POST /api/chat/send
+
+Send a message via Hub relay (supports offline delivery).
+
+**Auth:** JWT
+
+**Request:**
+```json
+{
+  "from": "node-abc123",
+  "to": "node-def456",
+  "type": "task",
+  "content": "<E2E encrypted ciphertext>",
+  "threadId": "thread-001"
+}
+```
+
+`type`: `human` | `task` | `ask`
+
+**Response `200`:** `{ "ok": true, "messageId": "msg-001", "deliveredAt": "..." }`
+
+---
+
+### GET /api/chat/inbox
+
+Pull offline messages for the calling Node.
+
+**Auth:** JWT
+
+**Query params:** `nodeId` (required)
+
+**Response `200`:**
+```json
+{
+  "messages": [
+    { "messageId": "msg-002", "from": "node-def456", "type": "ask", "content": "<ciphertext>", "sentAt": "..." }
+  ]
+}
+```
+
+---
+
+### GET /api/chat/threads
+
+Get conversation thread list for a Node.
+
+**Auth:** JWT
+
+**Query params:** `nodeId` (required)
+
+**Response `200`:**
+```json
+{
+  "threads": [
+    {
+      "threadId": "thread-001",
+      "participants": ["node-abc123", "node-def456"],
+      "lastMessageAt": "2026-04-03T10:00:00.000Z",
+      "messageCount": 12
+    }
+  ]
+}
+```
+
+---
+
+### GET /api/chat/thread/:id
+
+Get full message history for a thread.
+
+**Auth:** JWT
+
+**Response `200`:**
+```json
+{
+  "threadId": "thread-001",
+  "messages": [
+    { "messageId": "msg-001", "from": "node-abc123", "type": "task", "content": "<ciphertext>", "sentAt": "..." }
+  ]
+}
+```
+
+---
+
+### POST /api/chat/thread
+
+Create a new conversation thread.
+
+**Auth:** JWT
+
+**Request:** `{ "participants": ["node-abc123", "node-def456"], "topic": "Sprint planning" }`
+
+**Response `200`:** `{ "ok": true, "threadId": "thread-002" }`
+
+---
+
+## WebSocket
+
+### WS /chat/ws
+
+Real-time chat. Auth via query param.
+
+**Connect:** `ws://localhost:19001/chat/ws?nodeId=node-abc123`
+
+**Incoming:**
+```json
+{ "messageId": "msg-003", "from": "node-def456", "type": "task", "content": "<ciphertext>", "sentAt": "..." }
+```
+
+**Outgoing:**
+```json
+{ "to": "node-def456", "type": "ask", "content": "<ciphertext>", "threadId": "thread-001" }
+```
+
+---
+
+## Health
 
 ### GET /health
 
-无需认证。
+**Auth:** None
 
-**Response 200**
+**Response `200`:** `{ "ok": true, "version": "0.2.0", "uptime": 3600 }`
+
+---
+
+## Error Responses
+
 ```json
-{
-  "status": "ok",
-  "version": "0.1.0",
-  "uptime": 3600,
-  "nodesOnline": 2
-}
+{ "error": "unauthorized" }                         // 401
+{ "error": "forbidden" }                            // 403
+{ "error": "not found" }                            // 404
+{ "error": "validation failed", "details": [...] }  // 400
+{ "error": "internal server error" }                // 500
 ```
 
 ---
 
-## WebSocket API
+## Jurisdiction Payment Thresholds
 
-连接地址：`ws(s)://<hub-host>:19001/ws`
+| Jurisdiction | Auto-Approve ≤ | Requires Human > | Max Daily |
+|--------------|---------------|-----------------|-----------|
+| US | $500 | $500 | $5,000 |
+| EU | $30 | $30 | $1,000 |
+| HK | $200 | $1,300 | $6,500 |
+| SG | $150 | $750 | $3,750 |
+| CN | $137 | $685 | $1,370 |
+| GLOBAL | $10 | $10 | $100 |
 
-握手时携带 token：
-```
-ws://localhost:19001/ws?token=<accessToken>
-```
-
-### 消息格式
-
-所有 WS 消息为 JSON，包含 `type` 字段：
-
-```json
-{ "type": "MESSAGE_TYPE", "payload": { ... } }
-```
-
-### 客户端 → Hub
-
-| type | payload | 说明 |
-|------|---------|------|
-| `heartbeat` | `{ "timestamp": number }` | 保持在线状态（每 30s）|
-| `task_result` | `{ "taskId": string, "status": string, "output": string }` | 任务执行结果回调 |
-| `status_update` | `{ "agentStatus": string, "currentTask": string\|null }` | 更新节点状态 |
-
-### Hub → 客户端
-
-| type | payload | 说明 |
-|------|---------|------|
-| `task_dispatch` | `{ "taskId": string, "instruction": string, "priority": string }` | 新任务下发 |
-| `node_joined` | `{ "nodeId": string, "name": string }` | 新节点上线通知 |
-| `node_left` | `{ "nodeId": string }` | 节点下线通知 |
-| `heartbeat_ack` | `{ "timestamp": number }` | 心跳确认 |
-
----
-
-## 错误码
-
-| HTTP | error | 说明 |
-|------|-------|------|
-| 400 | `invalid_request` | 请求参数错误 |
-| 401 | `unauthorized` | 未认证或令牌无效 |
-| 403 | `forbidden` | 权限不足 |
-| 404 | `not_found` | 资源不存在 |
-| 409 | `conflict` | 资源冲突（如重复注册）|
-| 429 | `rate_limited` | 请求频率超限 |
-| 500 | `internal_error` | 服务器内部错误 |
-
-所有错误响应格式：
-```json
-{
-  "error": "error_code",
-  "message": "Human-readable description",
-  "requestId": "req-xxx"
-}
-```
+Prohibited categories (always rejected): `gambling`, `crypto`, `adult`, `weapons`.
