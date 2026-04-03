@@ -9,6 +9,7 @@ import { TaskPlanner, formatPlan } from './task-planner'
 import { createOwnerAuthRouter } from './routes/owner-auth'
 import { WorkloadTracker } from './workload-tracker'
 import { getPerformanceLedger } from './performance-ledger'
+import { getNodeGateway } from './llm-gateway'
 
 // Harness runner 接口（运行时注入，避免编译期跨包依赖）
 export type HarnessRunner = (opts: {
@@ -33,6 +34,51 @@ export function createServer(identity: NodeIdentity, config: JackClawConfig) {  
   // ── Health check ────────────────────────────────────────────────────────────
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', nodeId: identity.nodeId, ts: Date.now(), workload: workloadTracker.getSnapshot() })
+  })
+
+  // ── Ask: direct LLM call via gateway ──────────────────────────────────────
+  // POST /api/ask  { model?, prompt, systemPrompt? }
+  // → { answer, model, provider, tokens, latencyMs, costUsd }
+  app.post('/api/ask', async (req: Request, res: Response) => {
+    const { prompt, model, systemPrompt, temperature, max_tokens } = req.body
+    if (!prompt) { res.status(400).json({ error: 'prompt required' }); return }
+
+    const gateway = getNodeGateway()
+    if (!gateway) { res.status(503).json({ error: 'LLM gateway not initialized' }); return }
+
+    const targetModel = model || config.ai.model
+    const sys = systemPrompt || `You are ${identity.nodeId}, a JackClaw agent (role: ${(config as any).nodeRole ?? 'worker'}).`
+
+    try {
+      const result = await gateway.chat({
+        model: targetModel,
+        messages: [
+          { role: 'system', content: sys },
+          { role: 'user', content: prompt },
+        ],
+        temperature: temperature ?? 0.7,
+        max_tokens: max_tokens ?? 2048,
+      })
+      const answer = result.choices[0]?.message.content ?? ''
+      const costUsd = gateway.estimateCost(targetModel, result.usage.prompt_tokens, result.usage.completion_tokens)
+      res.json({
+        answer,
+        model: result.model,
+        provider: result.provider,
+        tokens: result.usage,
+        latencyMs: result.latencyMs,
+        costUsd,
+      })
+    } catch (err: any) {
+      res.status(500).json({ error: err.message })
+    }
+  })
+
+  // ── List available providers ───────────────────────────────────────────────
+  app.get('/api/providers', (_req: Request, res: Response) => {
+    const gateway = getNodeGateway()
+    if (!gateway) { res.json({ providers: [] }); return }
+    res.json({ providers: gateway.listProviders(), stats: gateway.getStats() })
   })
 
   // ── Receive task from Hub ───────────────────────────────────────────────────
@@ -170,16 +216,65 @@ export function handleTask(task: TaskPayload, identity: NodeIdentity, config: Ja
     return
   }
 
-  // action='ai' → 直接 AI 调用（带 AutoRetry + SmartCache）
+  // action='ai' → 通过 LLM Gateway 调用（支持任意 provider + 自动 fallback）
   if (task.action === 'ai' && task.params?.prompt) {
-    const aiClient = getAiClient(identity.nodeId, config)
-    aiClient.call({
-      systemPrompt: 'You are a JackClaw agent node. Complete the task concisely.',
-      messages: [{ role: 'user', content: task.params.prompt as string }],
-      queryContext: task.params.prompt as string,
+    const gateway = getNodeGateway()
+    const prompt = task.params.prompt as string
+    const model = (task.params.model as string) || config.ai.model
+    const systemPrompt = (task.params.systemPrompt as string) || `You are ${identity.nodeId}, a JackClaw agent node (role: ${(config as any).nodeRole ?? 'worker'}). Complete the task concisely.`
+
+    if (gateway) {
+      // Gateway available — use it (supports all providers + fallback chain)
+      gateway.chat({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: prompt },
+        ],
+        max_tokens: (task.params.maxTokens as number) || 2048,
+        temperature: (task.params.temperature as number) || 0.7,
+      }).then(result => {
+        const answer = result.choices[0]?.message.content ?? ''
+        const stats = gateway.getStats()
+        console.log(`[task] ${task.taskId} ai[${result.provider}/${result.model}] → ${result.usage.total_tokens} tokens, ${result.latencyMs}ms`)
+        console.log(`[task] Answer: ${answer.slice(0, 100)}${answer.length > 100 ? '...' : ''}`)
+        console.log(`[gateway] Total cost so far: $${stats.totalCostUsd.toFixed(6)}`)
+      }).catch(err => console.error('[task] gateway ai error:', err.message))
+    } else {
+      // Fallback to legacy ai-client
+      const aiClient = getAiClient(identity.nodeId, config)
+      aiClient.call({
+        systemPrompt,
+        messages: [{ role: 'user', content: prompt }],
+        queryContext: prompt,
+      }).then(result => {
+        console.log(`[task] ${task.taskId} ai[legacy] → attempts=${result.attempts} tokens=${result.usage.inputTokens}`)
+      }).catch(err => console.error('[task] ai error:', err.message))
+    }
+    return
+  }
+
+  // action='chat-reply' → 自动回复 ClawChat 消息（LLM 生成回复）
+  if (task.action === 'chat-reply' && task.params?.message) {
+    const gateway = getNodeGateway()
+    if (!gateway) return
+    const incomingMsg = task.params.message as string
+    const from = task.params.from as string
+    const model = (task.params.model as string) || config.ai.model
+
+    gateway.chat({
+      model,
+      messages: [
+        { role: 'system', content: `You are ${identity.nodeId} (${(config as any).nodeRole ?? 'worker'}). Reply concisely to your colleague's message.` },
+        { role: 'user', content: incomingMsg },
+      ],
+      max_tokens: 512,
+      temperature: 0.8,
     }).then(result => {
-      console.log(`[task] ${task.taskId} ai → attempts=${result.attempts} tokens=${result.usage.inputTokens}`)
-    }).catch(err => console.error('[task] ai error:', err.message))
+      const reply = result.choices[0]?.message.content ?? ''
+      console.log(`[chat-reply] ${from} → ${identity.nodeId}: "${incomingMsg.slice(0,40)}"`)
+      console.log(`[chat-reply] ${identity.nodeId} → ${from}: "${reply.slice(0,80)}"`)
+    }).catch(err => console.error('[chat-reply] error:', err.message))
     return
   }
 }

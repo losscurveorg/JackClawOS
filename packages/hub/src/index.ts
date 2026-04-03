@@ -23,6 +23,7 @@ httpServer.listen(PORT, () => {
   console.log(`  POST /api/chat/send    - ClawChat send message`)
   console.log(`  GET  /api/chat/inbox   - Pull offline messages`)
   console.log(`  WS   /chat/ws          - ClawChat realtime`)
+  console.log(`  POST /api/ask          - Ask any LLM via node gateway`)
   console.log(`  GET  /health           - Health check`)
 })
 
