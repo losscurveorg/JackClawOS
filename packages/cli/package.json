@@ -2,7 +2,7 @@
   "name": "@jackclaw/cli",
   "version": "0.1.0",
   "description": "JackClaw CLI management tool",
-  "main": "dist/src/index.js",
+  "main": "dist/index.js",
   "bin": {
     "jackclaw": "dist/src/index.js"
   },

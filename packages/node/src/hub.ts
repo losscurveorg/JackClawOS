@@ -13,9 +13,10 @@ export async function registerWithHub(
   const url = `${config.hubUrl}/api/register`
   const payload = {
     nodeId: identity.nodeId,
+    name: identity.displayName ?? identity.nodeId,
+    role: identity.role ?? 'worker',
     publicKey: identity.publicKey,
-    registeredAt: Date.now(),
-    port: config.port,
+    callbackUrl: `http://localhost:${config.port}`,
   }
 
   try {

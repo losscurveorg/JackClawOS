@@ -50,5 +50,7 @@ export interface NodeIdentity {
   nodeId: string
   publicKey: string   // PEM
   privateKey: string  // PEM
+  displayName?: string
+  role?: string
   createdAt: number
 }

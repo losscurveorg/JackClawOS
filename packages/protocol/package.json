@@ -2,8 +2,8 @@
   "name": "@jackclaw/protocol",
   "version": "0.1.0",
   "description": "JackClaw end-to-end encrypted messaging protocol",
-  "main": "dist/src/index.js",
-  "types": "dist/src/index.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
     "test": "node --test dist/tests/crypto.test.js dist/tests/message.test.js",

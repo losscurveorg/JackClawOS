@@ -2,8 +2,8 @@
   "name": "@jackclaw/node",
   "version": "0.1.0",
   "description": "JackClaw node agent — registers to Hub, reports daily, receives tasks",
-  "main": "dist/src/index.js",
-  "types": "dist/src/index.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "bin": {
     "jackclaw-node": "dist/src/cli.js"
   },

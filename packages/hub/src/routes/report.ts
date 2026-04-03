@@ -34,7 +34,36 @@ function decryptPayload(encrypted: EncryptedPayload, privateKeyPem: string): str
 }
 
 router.post('/', (req: Request, res: Response): void => {
-  const message = req.body as Partial<JackClawMessage>
+  const body = req.body
+
+  // ── Dev mode: accept plaintext report from authenticated nodes ──
+  // If body has 'summary' (plaintext) instead of full JackClawMessage envelope
+  if (body.summary && !body.payload && !body.signature) {
+    const jwtPayload = (req as any).jwtPayload as { nodeId: string; role: string } | undefined
+    if (!jwtPayload) {
+      res.status(401).json({ error: 'JWT required for plaintext reports' })
+      return
+    }
+
+    const entry: ReportEntry = {
+      nodeId: jwtPayload.nodeId,
+      messageId: `${jwtPayload.nodeId}-${Date.now()}`,
+      timestamp: Date.now(),
+      summary: body.summary,
+      period: body.period ?? 'daily',
+      visibility: body.visibility ?? 'ceo',
+      data: body.data ?? body,
+    }
+
+    saveReport(entry)
+    updateLastReport(jwtPayload.nodeId)
+    console.log(`[report] Plaintext report from ${jwtPayload.nodeId}: ${body.summary.slice(0, 80)}`)
+    res.json({ success: true, messageId: entry.messageId })
+    return
+  }
+
+  // ── Production mode: full encrypted JackClawMessage envelope ──
+  const message = body as Partial<JackClawMessage>
 
   if (!message.from || !message.payload || !message.timestamp || !message.signature) {
     res.status(400).json({ error: 'Invalid message format' })
