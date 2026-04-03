@@ -16,5 +16,29 @@
   },
   "engines": {
     "node": ">=20.0.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DevJackKong/JackClawOS.git"
+  },
+  "homepage": "https://github.com/DevJackKong/JackClawOS#readme",
+  "bugs": {
+    "url": "https://github.com/DevJackKong/JackClawOS/issues"
+  },
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "llm",
+    "ai",
+    "openai",
+    "anthropic",
+    "claude",
+    "gemini",
+    "qwen",
+    "deepseek",
+    "gateway"
+  ]
 }

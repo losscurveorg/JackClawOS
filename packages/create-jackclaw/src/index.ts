@@ -1,209 +1,399 @@
 #!/usr/bin/env node
 
 /**
- * npm create jackclaw my-team
- * 
- * Scaffolds a JackClaw team project with config, docker-compose, and README.
+ * create-jackclaw — Scaffold a complete JackClaw node project.
+ *
+ * Usage:
+ *   npm create jackclaw@latest
+ *   npx create-jackclaw
+ *   npx create-jackclaw --name my-node --role worker --provider openai --yes
  */
 
 import fs from 'fs'
 import path from 'path'
 import readline from 'readline'
 
+// ─── Banner ──────────────────────────────────────────────────────────────────
+
 const BANNER = `
-🦞 JackClaw — Create your AI company
-─────────────────────────────────────
+🦞 create-jackclaw — Scaffold your AI node
+───────────────────────────────────────────
 `
+
+// ─── CLI arg parsing ─────────────────────────────────────────────────────────
+
+interface CliArgs {
+  name?: string
+  role?: string
+  provider?: string
+  yes?: boolean
+}
+
+function parseArgs(argv: string[]): CliArgs {
+  const args: CliArgs = {}
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i]
+    if (a === '--yes' || a === '-y') {
+      args.yes = true
+    } else if (a === '--name' && argv[i + 1]) {
+      args.name = argv[++i]
+    } else if (a === '--role' && argv[i + 1]) {
+      args.role = argv[++i]
+    } else if (a === '--provider' && argv[i + 1]) {
+      args.provider = argv[++i]
+    } else if (!a.startsWith('-') && !args.name) {
+      // positional: treat as project name
+      args.name = a
+    }
+  }
+  return args
+}
+
+// ─── Prompts ─────────────────────────────────────────────────────────────────
 
 function ask(rl: readline.Interface, question: string, defaultVal: string): Promise<string> {
   return new Promise(resolve => {
-    rl.question(`${question} (${defaultVal}): `, answer => {
+    rl.question(`  ${question} (${defaultVal}): `, answer => {
       resolve(answer.trim() || defaultVal)
     })
   })
 }
 
-async function main() {
-  console.log(BANNER)
-
-  const dirName = process.argv[2]
-
-  if (!dirName) {
-    console.log('Usage: npm create jackclaw <team-name>\n')
-    console.log('Example: npm create jackclaw my-team')
-    process.exit(1)
-  }
-
-  const targetDir = path.resolve(process.cwd(), dirName)
-
-  if (fs.existsSync(targetDir)) {
-    console.error(`✗ Directory "${dirName}" already exists.`)
-    process.exit(1)
-  }
-
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
+function askChoice(
+  rl: readline.Interface,
+  question: string,
+  choices: string[],
+  defaultVal: string,
+): Promise<string> {
+  return new Promise(resolve => {
+    const choiceStr = choices.map(c => (c === defaultVal ? `[${c}]` : c)).join(' / ')
+    rl.question(`  ${question} (${choiceStr}): `, answer => {
+      const val = answer.trim().toLowerCase()
+      if (val && choices.includes(val)) {
+        resolve(val)
+      } else {
+        resolve(defaultVal)
+      }
+    })
   })
+}
 
-  const teamName = await ask(rl, 'Team name', dirName)
-  const nodeName = await ask(rl, 'Your node name', 'my-node')
-  const nodeRole = await ask(rl, 'Your role (ceo/engineer/designer)', 'engineer')
-  const hubPort = await ask(rl, 'Hub port', '3100')
-  const nodePort = await ask(rl, 'Node port', '19000')
+// ─── Validators ──────────────────────────────────────────────────────────────
 
-  rl.close()
+const ROLES = ['worker', 'engineer', 'analyst', 'ceo'] as const
+const PROVIDERS = ['openai', 'anthropic', 'ollama', 'custom'] as const
 
-  console.log(`\n📁 Creating ${dirName}...`)
-  fs.mkdirSync(targetDir, { recursive: true })
+function sanitizeName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
 
-  // jackclaw.config.json
-  const config = {
-    team: teamName,
-    hub: {
-      port: parseInt(hubPort),
+// ─── Templates ───────────────────────────────────────────────────────────────
+
+function genPackageJson(name: string, safeName: string, role: string): string {
+  const pkg = {
+    name: safeName,
+    version: '0.1.0',
+    private: true,
+    type: 'module',
+    scripts: {
+      build: 'tsc',
+      dev: 'tsc --watch',
+      start: 'npx jackclaw start',
+      typecheck: 'tsc --noEmit',
     },
-    node: {
-      name: nodeName,
-      role: nodeRole,
-      port: parseInt(nodePort),
-      hubUrl: `http://localhost:${hubPort}`,
+    dependencies: {
+      '@jackclaw/node': '^0.1.0',
+      '@jackclaw/sdk': '^0.1.0',
     },
-    visibility: {
-      shareMemory: true,
-      shareTasks: true,
+    devDependencies: {
+      '@types/node': '^20.0.0',
+      typescript: '^5.4.0',
     },
-    reportCron: '0 8 * * *',
+    jackclaw: {
+      role,
+    },
   }
-  fs.writeFileSync(
-    path.join(targetDir, 'jackclaw.config.json'),
-    JSON.stringify(config, null, 2) + '\n',
-  )
+  return JSON.stringify(pkg, null, 2) + '\n'
+}
 
-  // docker-compose.yml
-  const dockerCompose = `version: "3.8"
+function genTsConfig(): string {
+  const config = {
+    compilerOptions: {
+      target: 'ES2022',
+      module: 'NodeNext',
+      moduleResolution: 'NodeNext',
+      outDir: 'dist',
+      rootDir: 'src',
+      strict: true,
+      esModuleInterop: true,
+      skipLibCheck: true,
+      declaration: true,
+      sourceMap: true,
+    },
+    include: ['src'],
+    exclude: ['node_modules', 'dist'],
+  }
+  return JSON.stringify(config, null, 2) + '\n'
+}
 
-services:
-  hub:
-    image: node:22-alpine
-    working_dir: /app
-    command: npx jackclaw start --hub-only --hub-port ${hubPort}
-    ports:
-      - "${hubPort}:${hubPort}"
-    volumes:
-      - hub-data:/root/.jackclaw/hub
-    environment:
-      - NODE_ENV=production
+function genSrcIndex(name: string, role: string): string {
+  return `import { definePlugin } from '@jackclaw/sdk'
 
-  node:
-    image: node:22-alpine
-    working_dir: /app
-    command: npx jackclaw start --node-only --node-port ${nodePort} --hub-port ${hubPort}
-    ports:
-      - "${nodePort}:${nodePort}"
-    volumes:
-      - node-data:/root/.jackclaw
-    environment:
-      - JACKCLAW_HUB_URL=http://hub:${hubPort}
-      - NODE_PORT=${nodePort}
-    depends_on:
-      - hub
+/**
+ * ${name} — A JackClaw ${role} node plugin.
+ *
+ * This plugin registers basic commands that your node exposes
+ * to the Hub and other nodes in the team.
+ */
+export default definePlugin({
+  name: '${name}',
+  version: '0.1.0',
+  description: 'A ${role} node for JackClaw',
 
-volumes:
-  hub-data:
-  node-data:
+  commands: {
+    /**
+     * /ping — Simple health check.
+     */
+    ping: async (ctx) => {
+      return { text: \`🦞 pong from \${ctx.node.name} (role: ${role})\` }
+    },
+
+    /**
+     * /status — Report node status.
+     */
+    status: async (ctx) => {
+      return {
+        text: \`Node \${ctx.node.name} is online\`,
+        items: [
+          { label: 'Role', value: '${role}' },
+          { label: 'Version', value: ctx.plugin.version },
+          { label: 'Uptime', value: \`\${Math.floor(process.uptime())}s\` },
+        ],
+      }
+    },
+
+    /**
+     * /hello <name> — Greet someone.
+     */
+    hello: async (ctx) => {
+      const who = ctx.args[0] || ctx.userName || 'world'
+      return { text: \`👋 Hello, \${who}! I'm \${ctx.node.name}.\` }
+    },
+  },
+
+  schedules: {
+    /**
+     * Daily report — runs every day at 08:00.
+     */
+    dailyReport: {
+      cron: '0 8 * * *',
+      handler: async (ctx) => {
+        await ctx.report({
+          summary: \`Daily report from \${ctx.node.name}\`,
+          items: [
+            { label: 'Status', value: 'healthy' },
+            { label: 'Tasks completed', value: 0 },
+          ],
+        })
+      },
+    },
+  },
+})
 `
-  fs.writeFileSync(path.join(targetDir, 'docker-compose.yml'), dockerCompose)
+}
 
-  // README.md
-  const readme = `# ${teamName}
+function genEnvExample(provider: string): string {
+  const lines = [
+    '# JackClaw Node Configuration',
+    '#',
+    '# Copy this file to .env and fill in your values.',
+    '',
+    '# Hub connection',
+    'JACKCLAW_HUB_URL=http://localhost:3100',
+    '',
+    '# LLM Provider',
+    `LLM_PROVIDER=${provider}`,
+    '',
+  ]
 
-> Powered by [JackClaw](https://github.com/DevJackKong/JackClawOS) 🦞
+  if (provider === 'openai') {
+    lines.push('OPENAI_API_KEY=sk-...')
+    lines.push('OPENAI_MODEL=gpt-4o')
+  } else if (provider === 'anthropic') {
+    lines.push('ANTHROPIC_API_KEY=sk-ant-...')
+    lines.push('ANTHROPIC_MODEL=claude-sonnet-4-20250514')
+  } else if (provider === 'ollama') {
+    lines.push('OLLAMA_HOST=http://localhost:11434')
+    lines.push('OLLAMA_MODEL=llama3')
+  } else {
+    lines.push('# Configure your custom LLM provider')
+    lines.push('LLM_API_BASE=http://localhost:8000')
+    lines.push('LLM_API_KEY=')
+    lines.push('LLM_MODEL=')
+  }
+
+  lines.push('')
+  return lines.join('\n')
+}
+
+function genReadme(name: string, role: string, provider: string): string {
+  return `# ${name}
+
+> A **${role}** node for [JackClaw](https://github.com/nicepkg/JackClawOS) 🦞
 
 ## Quick Start
 
 \`\`\`bash
-# Option 1: Docker
-docker-compose up
+# Install dependencies
+npm install
 
-# Option 2: Local
+# Start the node
 npx jackclaw start
 \`\`\`
 
-Hub: http://localhost:${hubPort}
-Node: http://localhost:${nodePort}
-
 ## Configuration
 
-Edit \`jackclaw.config.json\` to customize your team setup.
+1. Copy \`.env.example\` to \`.env\` and fill in your API keys.
+2. The node connects to a JackClaw Hub at \`JACKCLAW_HUB_URL\`.
 
-## Adding Nodes
+## Plugin Commands
 
-Each AI agent runs as a separate Node. Add more by:
+| Command   | Description          |
+|-----------|----------------------|
+| \`/ping\`   | Health check         |
+| \`/status\` | Report node status   |
+| \`/hello\`  | Greet someone        |
+
+## Project Structure
+
+\`\`\`
+${name}/
+├── src/
+│   └── index.ts        # Plugin definition (commands, schedules)
+├── package.json
+├── tsconfig.json
+├── .env.example
+└── README.md
+\`\`\`
+
+## Development
 
 \`\`\`bash
-# On another machine or terminal
-npx jackclaw start --node-only --node-port 19001
+# Watch mode
+npm run dev
+
+# Type check
+npm run typecheck
+
+# Build
+npm run build
 \`\`\`
 
-## Architecture
+## LLM Provider: ${provider}
 
-\`\`\`
-CEO (You) → Hub (:${hubPort}) → Node (:${nodePort})
-                              → Node (:19001)
-                              → Node (:19002)
-\`\`\`
+${provider === 'openai' ? 'Set `OPENAI_API_KEY` in your `.env` file.' : ''}${provider === 'anthropic' ? 'Set `ANTHROPIC_API_KEY` in your `.env` file.' : ''}${provider === 'ollama' ? 'Make sure Ollama is running at `http://localhost:11434`.' : ''}${provider === 'custom' ? 'Configure your custom LLM endpoint in `.env`.' : ''}
+
+## Learn More
+
+- [JackClaw Documentation](https://github.com/nicepkg/JackClawOS)
+- [Plugin SDK Reference](https://github.com/nicepkg/JackClawOS/tree/main/packages/jackclaw-sdk)
 `
-  fs.writeFileSync(path.join(targetDir, 'README.md'), readme)
+}
 
-  // package.json
-  const pkg = {
-    name: teamName.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
-    version: '0.1.0',
-    private: true,
-    scripts: {
-      start: 'npx jackclaw start',
-      'start:hub': 'npx jackclaw start --hub-only',
-      'start:node': 'npx jackclaw start --node-only',
-    },
+function genGitignore(): string {
+  return `node_modules/
+dist/
+.env
+*.log
+.DS_Store
+`
+}
+
+// ─── Main ────────────────────────────────────────────────────────────────────
+
+async function main() {
+  console.log(BANNER)
+
+  const cliArgs = parseArgs(process.argv)
+  const skipPrompts = cliArgs.yes === true
+
+  let projectName: string
+  let role: string
+  let provider: string
+
+  if (skipPrompts) {
+    // Non-interactive mode: use defaults for anything not provided
+    projectName = cliArgs.name || 'my-jackclaw-node'
+    role = cliArgs.role && (ROLES as readonly string[]).includes(cliArgs.role)
+      ? cliArgs.role
+      : 'worker'
+    provider = cliArgs.provider && (PROVIDERS as readonly string[]).includes(cliArgs.provider)
+      ? cliArgs.provider
+      : 'openai'
+  } else {
+    // Interactive mode
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    })
+
+    projectName = await ask(rl, 'Project name', cliArgs.name || 'my-jackclaw-node')
+    role = await askChoice(rl, 'Node role', [...ROLES], cliArgs.role || 'worker')
+    provider = await askChoice(rl, 'LLM provider', [...PROVIDERS], cliArgs.provider || 'openai')
+
+    rl.close()
   }
-  fs.writeFileSync(path.join(targetDir, 'package.json'), JSON.stringify(pkg, null, 2) + '\n')
 
-  // .gitignore
-  fs.writeFileSync(
-    path.join(targetDir, '.gitignore'),
-    'node_modules/\n.jackclaw/\n*.log\n',
-  )
+  const safeName = sanitizeName(projectName)
+  const targetDir = path.resolve(process.cwd(), projectName)
 
-  // .env
-  fs.writeFileSync(
-    path.join(targetDir, '.env'),
-    `# JackClaw Configuration
-HUB_PORT=${hubPort}
-NODE_PORT=${nodePort}
-# ANTHROPIC_BASE_URL=https://api.anthropic.com
-# ANTHROPIC_API_KEY=sk-...
-`,
-  )
+  // Check if directory already exists
+  if (fs.existsSync(targetDir)) {
+    console.error(`\n  ✗ Directory "${projectName}" already exists. Pick a different name.\n`)
+    process.exit(1)
+  }
 
+  console.log(`\n  📁 Scaffolding ${projectName}...\n`)
+
+  // Create directories
+  fs.mkdirSync(path.join(targetDir, 'src'), { recursive: true })
+
+  // Write files
+  const files: Array<[string, string]> = [
+    ['package.json', genPackageJson(projectName, safeName, role)],
+    ['tsconfig.json', genTsConfig()],
+    [path.join('src', 'index.ts'), genSrcIndex(projectName, role)],
+    ['.env.example', genEnvExample(provider)],
+    ['README.md', genReadme(projectName, role, provider)],
+    ['.gitignore', genGitignore()],
+  ]
+
+  for (const [filePath, content] of files) {
+    const fullPath = path.join(targetDir, filePath)
+    fs.writeFileSync(fullPath, content, 'utf-8')
+    console.log(`  ✔ ${filePath}`)
+  }
+
+  // Done!
   console.log(`
-✅ Done! Your JackClaw team "${teamName}" is ready.
+  ✅ Project "${projectName}" created successfully!
 
-  cd ${dirName}
-  npx jackclaw start
+  Next steps:
 
-🦞 Hub: http://localhost:${hubPort}
-🤖 Node: http://localhost:${nodePort}
+    cd ${projectName}
+    npm install
+    npx jackclaw start
 
-Next steps:
-  1. Edit jackclaw.config.json to customize
-  2. Start with: npx jackclaw start
-  3. Add more nodes on other machines
-  4. Connect to OpenClaw for AI agent integration
+  🦞 Role: ${role} | LLM: ${provider}
+  📖 Edit src/index.ts to add commands and schedules.
 `)
 }
 
 main().catch(err => {
-  console.error('Error:', err.message)
+  console.error(`\n  ✗ Error: ${err.message}\n`)
   process.exit(1)
 })

@@ -1,22 +1,61 @@
 # Changelog
 
-## [0.1.0] - 2026-04-03
+All notable changes to JackClaw will be documented here.
 
-### Added
-- **Protocol**: RSA-4096 + AES-256-GCM hybrid encryption, message signing, JWT auth
-- **Hub**: Central coordinator with WebSocket + REST API, node registry, report aggregation
-- **Node**: Agent worker runtime with auto-registration, task execution, daily reporting
-- **Memory**: 4-layer memory system (L1 cache → L2 SQLite → L3 semantic → Hub sync)
-  - Zero-config collaboration sessions (share → end)
-  - Skill transfer protocol (findExpert → learnFrom)
-  - Teaching memory isolation with discard/archive/snapshot modes
-- **CLI**: `jackclaw init/start/chat/status/nodes/invite` commands
-- **Dashboard**: Real-time web UI for node status, reports, and chat threads
-- **Harness**: IDE bridge for Claude Code, Codex, and Cursor integration
-- **Watchdog**: Human oversight with monitoring policies and append-only alerts
-- **Payment Vault**: Multi-jurisdiction compliance payments with auto/human thresholds
-- **Tunnel**: HTTPS tunnel via cloudflared for public node access
-- **OpenClaw Plugin**: Bridge to OpenClaw ecosystem
-- **SDK**: TypeScript SDK for external integrations
-- **PWA**: Progressive web app for mobile access
-- **Create JackClaw**: `npm create jackclaw` project scaffolding
+## [0.1.0] — 2026-04-03
+
+### 🎉 Initial Release
+
+First public release of JackClaw — Cross-Agent Collaboration Framework.
+
+#### Core
+- **Hub** — Central orchestrator with REST API + WebSocket
+- **Node** — AI agent worker with auto-registration, cron reports, task execution
+- **Protocol** — RSA-4096 + AES-256 encrypted messaging, JWT auth
+- **ClawChat** — Real-time messaging (WebSocket + REST): DMs, threads, groups
+
+#### LLM Gateway (`@jackclaw/llm-gateway`)
+- **16 providers** out of the box (set API key → works)
+- International: OpenAI, Anthropic (Claude), Google (Gemini), DeepSeek, Groq, Mistral, Together, OpenRouter, Ollama
+- Chinese: 通义千问, 文心一言, 混元, 讯飞星火, Kimi, 智谱GLM (free tier!), 百川
+- Auto-routing by model name prefix
+- Fallback chain, cost estimation, stats tracking
+- `gateway.fast()` / `.smart()` / `.local()` shortcuts
+
+#### CLI
+- `jackclaw start` — one-command Hub + Node launch
+- `jackclaw start --tunnel` — instant public URL via cloudflared
+- `jackclaw start --nodes 3` — multi-node parallel launch
+- `jackclaw demo` — 30-second showcase (CEO + 3 AI employees)
+- `jackclaw chat` — terminal ClawChat
+
+#### Dashboard
+- Real-time web UI at `http://localhost:3100`
+- Live: node status, daily reports, messages
+- Built-in ClawChat panel (WebSocket)
+- 💰 Pending Payments with Approve/Reject buttons
+
+#### Memory (`@jackclaw/memory`)
+- 4-category memory system: feedback / user / project / reference
+- 3 scopes: private / shared / teaching
+- `semanticQuery()` — TF-IDF + optional LLM embedding
+- `POST /api/memory/search` — HTTP semantic search
+
+#### SDK (`@jackclaw/sdk`)
+- `definePlugin()` / `defineNode()` factory
+- Built-in examples: weather, translator, daily-reporter
+- Mock context helpers for unit testing
+
+#### Payment Vault
+- CEO-approval workflow: submit → compliance check → approve/reject → execute
+- Dashboard integration
+
+#### Security
+- All messages signed + encrypted (RSA-4096 + AES-256)
+- JWT authentication for protected routes
+- Human-in-loop for high-risk operations
+
+### Stats
+- 15 packages in monorepo
+- 45+ E2E test assertions
+- ~15,000 lines of TypeScript

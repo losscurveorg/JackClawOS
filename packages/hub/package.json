@@ -29,5 +29,26 @@
     "@types/node": "^20.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DevJackKong/JackClawOS.git"
+  },
+  "homepage": "https://github.com/DevJackKong/JackClawOS#readme",
+  "bugs": {
+    "url": "https://github.com/DevJackKong/JackClawOS/issues"
+  },
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "jackclaw",
+    "hub",
+    "orchestrator"
+  ]
 }

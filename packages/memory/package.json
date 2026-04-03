@@ -18,5 +18,27 @@
     "@types/express": "^4.17.21",
     "@types/node": "^20.0.0",
     "typescript": "^5.0.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DevJackKong/JackClawOS.git"
+  },
+  "homepage": "https://github.com/DevJackKong/JackClawOS#readme",
+  "bugs": {
+    "url": "https://github.com/DevJackKong/JackClawOS/issues"
+  },
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "memory",
+    "agent",
+    "rag",
+    "semantic"
+  ]
 }

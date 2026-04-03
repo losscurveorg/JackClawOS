@@ -24,6 +24,23 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "keywords": ["jackclaw", "sdk", "plugin", "node"],
-  "license": "MIT"
+  "keywords": [
+    "jackclaw",
+    "sdk",
+    "plugin",
+    "agent"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DevJackKong/JackClawOS.git"
+  },
+  "homepage": "https://github.com/DevJackKong/JackClawOS#readme",
+  "bugs": {
+    "url": "https://github.com/DevJackKong/JackClawOS/issues"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
 }
