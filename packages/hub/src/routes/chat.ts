@@ -133,6 +133,42 @@ export function attachChatWss(server: import('http').Server): WebSocketServer {
           }
         }
 
+        // task 消息：自动触发 TaskPlanner 规划并回传发送方
+        if (msg.type === 'task') {
+          setImmediate(async () => {
+            try {
+              const planResp = await fetch('http://localhost:3100/api/plan/estimate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  taskId: msg.id,
+                  title: msg.content.slice(0, 80),
+                  description: msg.content,
+                  useAi: false,
+                })
+              })
+              const { plan, formatted } = await planResp.json() as { plan: unknown; formatted?: string }
+              const planMsg: ChatMessage = {
+                id: `plan-${msg.id}`,
+                from: 'hub-planner',
+                to: msg.from,
+                content: formatted ?? JSON.stringify(plan),
+                type: 'plan-result',
+                ts: Date.now(),
+                signature: '',
+                encrypted: false,
+                metadata: { plan }
+              }
+              const senderWs = wsClients.get(msg.from)
+              if (senderWs?.readyState === WebSocket.OPEN) {
+                senderWs.send(JSON.stringify({ event: 'message', data: planMsg }))
+              } else {
+                store.queueForOffline(msg.from, planMsg)
+              }
+            } catch (_e) { /* 规划失败不影响消息路由 */ }
+          })
+        }
+
         // 静默更新 Owner Memory（type='human' 消息，后台观察，不阻塞）
         if (msg.type === 'human') {
           setImmediate(() => {

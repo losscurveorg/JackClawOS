@@ -11,6 +11,7 @@ export type ChatMessageType =
   | 'broadcast'
   | 'reply'
   | 'ack'
+  | 'plan-result'
 
 export interface ChatMessage {
   id: string
@@ -31,6 +32,7 @@ export interface ChatMessage {
   signature: string
   encrypted: boolean
   read?: boolean
+  metadata?: Record<string, unknown>
   executionResult?: {
     status: 'success' | 'failed' | 'pending-review'
     output: string
