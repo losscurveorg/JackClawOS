@@ -10,11 +10,12 @@ import { getHubKeys, JWT_SECRET } from '../server'
 const router = Router()
 
 router.post('/', (req: Request, res: Response): void => {
-  const { nodeId, name, role, publicKey } = req.body as {
+  const { nodeId, name, role, publicKey, callbackUrl } = req.body as {
     nodeId?: string
     name?: string
     role?: string
     publicKey?: string
+    callbackUrl?: string
   }
 
   if (!nodeId || !name || !role || !publicKey) {
@@ -30,7 +31,7 @@ router.post('/', (req: Request, res: Response): void => {
 
   const existing = nodeExists(nodeId)
 
-  const node = registerNode({ nodeId, name, role, publicKey })
+  const node = registerNode({ nodeId, name, role, publicKey, callbackUrl })
 
   const token = jwt.sign(
     { nodeId: node.nodeId, role: node.role },

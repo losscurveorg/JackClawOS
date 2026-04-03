@@ -1,88 +1,157 @@
-// jackclaw start [--hub-only] [--node-only] [--hub-port 3100] [--node-port 19000]
-import { Command } from "commander"
-import { spawn, ChildProcess } from "child_process"
-import net from "net"
-import path from "path"
+/**
+ * jackclaw start [--hub-only] [--node-only] [--hub-port 3100] [--node-port 19000]
+ *
+ * Spawns Hub (blue) and/or Node (green) processes.
+ * - Port pre-flight: exits with error if port already in use
+ * - Health poll: waits for /health → ok before printing "✅ ready"
+ * - Ctrl+C: SIGTERM → 1s → SIGKILL graceful exit
+ */
+import { Command } from 'commander';
+import { spawn, ChildProcess } from 'child_process';
+import net from 'net';
+import path from 'path';
+import http from 'http';
+import chalk from 'chalk';
 
-async function isPortFree(port: number): Promise<boolean> {
+// ─── Port check ────────────────────────────────────────────────────────────────
+
+function isPortInUse(port: number): Promise<boolean> {
   return new Promise(resolve => {
-    const s = net.createServer()
-    s.once("error", () => resolve(false))
-    s.once("listening", () => { s.close(); resolve(true) })
-    s.listen(port)
-  })
+    const s = net.createServer();
+    s.once('error', (err: NodeJS.ErrnoException) => resolve(err.code === 'EADDRINUSE'));
+    s.once('listening', () => { s.close(); resolve(false); });
+    s.listen(port, '127.0.0.1');
+  });
 }
 
-async function waitReady(url: string, timeoutMs = 15000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(url)
-      if (r.ok) return true
-    } catch {}
-    await new Promise(r => setTimeout(r, 500))
-  }
-  return false
+// ─── Health poll ───────────────────────────────────────────────────────────────
+
+function waitForHealth(url: string, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve, reject) => {
+    function attempt() {
+      if (Date.now() > deadline) return reject(new Error(`Timed out waiting for ${url}`));
+      http.get(url, res => {
+        let body = '';
+        res.on('data', c => { body += c; });
+        res.on('end', () => {
+          try { if (JSON.parse(body).status === 'ok') return resolve(); } catch {}
+          setTimeout(attempt, 1000);
+        });
+      }).on('error', () => setTimeout(attempt, 1000));
+    }
+    attempt();
+  });
 }
 
-export function registerStartCommand(program: Command) {
+// ─── Spawn with colored prefix ─────────────────────────────────────────────────
+
+function spawnService(opts: {
+  label: string;
+  color: chalk.Chalk;
+  script: string;
+  env?: Record<string, string>;
+}): ChildProcess {
+  const prefix = opts.color(`[${opts.label}]`);
+  const child = spawn('node', [opts.script], {
+    env: { ...process.env, ...opts.env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  child.stdout?.on('data', (d: Buffer) => {
+    d.toString().split('\n').filter(l => l.trim()).forEach(l => console.log(`${prefix} ${l}`));
+  });
+  child.stderr?.on('data', (d: Buffer) => {
+    d.toString().split('\n').filter(l => l.trim()).forEach(l => console.error(`${prefix} ${chalk.red(l)}`));
+  });
+  child.on('exit', code => {
+    if (code !== null && code !== 0) console.error(`${prefix} ${chalk.red(`exited with code ${code}`)}`);
+  });
+  return child;
+}
+
+// ─── Graceful shutdown ─────────────────────────────────────────────────────────
+
+function shutdown(procs: ChildProcess[]): void {
+  console.log(chalk.yellow('\n[start] Shutting down...'));
+  procs.forEach(p => { if (p.exitCode === null) p.kill('SIGTERM'); });
+  setTimeout(() => {
+    procs.forEach(p => { if (p.exitCode === null) p.kill('SIGKILL'); });
+    process.exit(0);
+  }, 1000).unref();
+}
+
+// ─── Command ───────────────────────────────────────────────────────────────────
+
+export function registerStart(program: Command): void {
   program
-    .command("start")
-    .description("Start JackClaw Hub and/or Node")
-    .option("--hub-only", "Start Hub only")
-    .option("--node-only", "Start Node only")
-    .option("--hub-port <port>", "Hub port", "3100")
-    .option("--node-port <port>", "Node port", "19000")
-    .action(async (opts) => {
-      const hubPort = parseInt(opts.hubPort)
-      const nodePort = parseInt(opts.nodePort)
-      const processes: ChildProcess[] = []
+    .command('start')
+    .description('Start JackClaw Hub and/or Node services')
+    .option('--hub-only', 'Start Hub only')
+    .option('--node-only', 'Start Node only')
+    .option('--hub-port <port>', 'Hub HTTP port', '3100')
+    .option('--node-port <port>', 'Node HTTP port', '19000')
+    .action(async (opts: { hubOnly?: boolean; nodeOnly?: boolean; hubPort: string; nodePort: string }) => {
+      const startHub  = !opts.nodeOnly;
+      const startNode = !opts.hubOnly;
+      const hubPort   = parseInt(opts.hubPort, 10);
+      const nodePort  = parseInt(opts.nodePort, 10);
 
-      const startHub = !opts.nodeOnly
-      const startNode = !opts.hubOnly
+      // Resolve dist entry points relative to monorepo root
+      const mono = path.resolve(__dirname, '../../../../');
+      const hubScript  = path.join(mono, 'packages/hub/dist/index.js');
+      const nodeScript = path.join(mono, 'packages/node/dist/src/index.js');
 
+      const procs: ChildProcess[] = [];
+
+      // Port pre-flight
+      if (startHub && await isPortInUse(hubPort)) {
+        console.error(chalk.red(`✗ Port ${hubPort} already in use (Hub). Use --hub-port to change.`));
+        process.exit(1);
+      }
+      if (startNode && await isPortInUse(nodePort)) {
+        console.error(chalk.red(`✗ Port ${nodePort} already in use (Node). Use --node-port to change.`));
+        process.exit(1);
+      }
+
+      // Spawn Hub
       if (startHub) {
-        if (!(await isPortFree(hubPort))) {
-          console.error(`❌ Port ${hubPort} is already in use. Hub cannot start.`)
-          if (!startNode) process.exit(1)
-        } else {
-          const hub = spawn("node", [path.resolve(__dirname, "../../hub/dist/index.js")], {
-            env: { ...process.env, HUB_PORT: String(hubPort) },
-            stdio: "pipe"
-          })
-          processes.push(hub)
-          hub.stdout?.on("data", d => process.stdout.write(`\x1b[34m[hub]\x1b[0m ${d}`))
-          hub.stderr?.on("data", d => process.stderr.write(`\x1b[34m[hub]\x1b[0m ${d}`))
-          const ready = await waitReady(`http://localhost:${hubPort}/health`)
-          console.log(ready ? `✅ Hub ready on :${hubPort}` : `⚠️ Hub may not be ready yet`)
+        console.log(chalk.blue(`[start] Spawning Hub on port ${hubPort}...`));
+        procs.push(spawnService({
+          label: 'hub', color: chalk.blue, script: hubScript,
+          env: { HUB_PORT: String(hubPort) },
+        }));
+        try {
+          await waitForHealth(`http://localhost:${hubPort}/health`);
+          console.log(chalk.green(`✅ Hub ready — http://localhost:${hubPort}`));
+        } catch (e: any) {
+          console.error(chalk.red(`✗ Hub not healthy: ${e.message}`));
+          shutdown(procs); return;
         }
       }
 
+      // Spawn Node
       if (startNode) {
-        if (!(await isPortFree(nodePort))) {
-          console.error(`❌ Port ${nodePort} is already in use. Node cannot start.`)
-        } else {
-          const node = spawn("node", [path.resolve(__dirname, "../../node/dist/index.js")], {
-            env: { ...process.env, NODE_PORT: String(nodePort) },
-            stdio: "pipe"
-          })
-          processes.push(node)
-          node.stdout?.on("data", d => process.stdout.write(`\x1b[32m[node]\x1b[0m ${d}`))
-          node.stderr?.on("data", d => process.stderr.write(`\x1b[32m[node]\x1b[0m ${d}`))
-          const ready = await waitReady(`http://localhost:${nodePort}/health`)
-          console.log(ready ? `✅ Node ready on :${nodePort}` : `⚠️ Node may not be ready yet`)
+        console.log(chalk.green(`[start] Spawning Node on port ${nodePort}...`));
+        procs.push(spawnService({
+          label: 'node', color: chalk.green, script: nodeScript,
+          env: { NODE_PORT: String(nodePort), HUB_URL: `http://localhost:${hubPort}` },
+        }));
+        try {
+          await waitForHealth(`http://localhost:${nodePort}/health`);
+          console.log(chalk.green(`✅ Node ready — http://localhost:${nodePort}`));
+        } catch (e: any) {
+          console.error(chalk.red(`✗ Node not healthy: ${e.message}`));
+          shutdown(procs); return;
         }
       }
 
-      if (processes.length === 0) { console.error("Nothing to start."); process.exit(1) }
+      if (procs.length === 0) { console.error(chalk.red('Nothing to start.')); process.exit(1); }
 
-      const shutdown = () => {
-        console.log("\n⏹ Shutting down...")
-        processes.forEach(p => { p.kill("SIGTERM"); setTimeout(() => p.kill("SIGKILL"), 1000) })
-        setTimeout(() => process.exit(0), 1500)
-      }
-      process.on("SIGINT", shutdown)
-      process.on("SIGTERM", shutdown)
-      console.log("Running. Press Ctrl+C to stop.")
-    })
+      console.log(chalk.bold('\nAll services running. Ctrl+C to stop.\n'));
+      process.on('SIGINT',  () => shutdown(procs));
+      process.on('SIGTERM', () => shutdown(procs));
+    });
 }
+
+// backward-compat alias
+export { registerStart as registerStartCommand };
