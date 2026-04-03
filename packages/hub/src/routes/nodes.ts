@@ -1,10 +1,12 @@
-// GET /api/nodes - List all registered nodes (CEO only)
-// JWT must have role === 'ceo'
+// GET  /api/nodes                     - List all registered nodes (CEO only)
+// POST /api/nodes/:nodeId/workload     - Node pushes workload snapshot (self or CEO)
+// JWT must have role === 'ceo' for GET
 
 import { Router, Request, Response } from 'express'
 import { getAllNodes } from '../store/nodes'
 import { getLastReportEntry } from '../store/reports'
 import { getAlerts, getLatestSnapshot } from '@jackclaw/watchdog'
+import { getWorkload, setWorkload, WorkloadSnapshot } from '../store/workload-cache'
 
 const router = Router()
 
@@ -36,6 +38,7 @@ router.get('/', (req: Request, res: Response): void => {
         lastSnapshotAt: snapshot?.timestamp ?? null,
         memoryHash: snapshot?.memoryHash ?? null,
       },
+      workload: getWorkload(node.nodeId),
     }
   })
 
@@ -44,6 +47,34 @@ router.get('/', (req: Request, res: Response): void => {
     total: result.length,
     nodes: result,
   })
+})
+
+/**
+ * POST /api/nodes/:nodeId/workload
+ * Nodes push their latest workload snapshot.
+ * A node may only push for itself (unless CEO).
+ */
+router.post('/:nodeId/workload', (req: Request, res: Response): void => {
+  const jwtPayload = (req as Request & { jwtPayload?: { nodeId: string; role: string } }).jwtPayload ?? { nodeId: '', role: '' }
+  const { nodeId } = req.params
+
+  if (jwtPayload.role !== 'ceo' && jwtPayload.nodeId !== nodeId) {
+    res.status(403).json({ error: 'Access denied. Can only push your own workload.' })
+    return
+  }
+
+  const body = req.body as Partial<WorkloadSnapshot>
+  if (
+    typeof body.activeTasks !== 'number' ||
+    typeof body.queuedTasks !== 'number' ||
+    typeof body.completedToday !== 'number'
+  ) {
+    res.status(400).json({ error: 'Missing required fields: activeTasks, queuedTasks, completedToday' })
+    return
+  }
+
+  setWorkload(nodeId, { ...body, nodeId, updatedAt: body.updatedAt ?? Date.now() } as WorkloadSnapshot)
+  res.json({ success: true })
 })
 
 export default router

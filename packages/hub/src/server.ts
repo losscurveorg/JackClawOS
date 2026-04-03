@@ -22,6 +22,7 @@ import planRoute from './routes/plan'
 import { chatRouter, attachChatWss } from './routes/chat'
 import teachRoute from './routes/teach'
 import orgNormRoute from './routes/org-norm'
+import orgMemoryRoute from './routes/org-memory'
 import { JWTPayload } from './types'
 
 // ─── Hub Configuration ────────────────────────────────────────────────────────
@@ -150,6 +151,7 @@ export function createServer(): Application {
   app.use('/api/plan', planRoute)
   app.use('/api/teach', teachRoute)
   app.use('/api/org-norm', orgNormRoute)
+  app.use('/api/org-memory', orgMemoryRoute)
   app.use('/api/chat', chatRouter)   // ClawChat REST
 
   // 404 handler

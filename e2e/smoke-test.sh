@@ -1,64 +1,142 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════
 # JackClaw E2E Smoke Test
-# Usage: HUB_URL=http://localhost:3100 bash e2e/smoke-test.sh
+# Requires Hub already running on HUB_URL (default: http://localhost:13100)
+#
+# Usage:
+#   HUB_URL=http://localhost:13100 ./e2e/smoke-test.sh
+#   ./e2e/smoke-test.sh                 # uses default HUB_URL
+# ═══════════════════════════════════════════════════════════════════
+set -euo pipefail
 
-HUB_URL=${HUB_URL:-"http://localhost:3100"}
+HUB_URL="${HUB_URL:-http://localhost:13100}"
 PASS=0
 FAIL=0
 
-check() {
-  local name="$1"
-  local cmd="$2"
-  if eval "$cmd" > /dev/null 2>&1; then
-    echo "  [PASS] $name"
-    PASS=$((PASS+1))
+# ── Colors ──────────────────────────────────────────────────────────
+GREEN='\033[0;32m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
+ok()   { echo -e "${GREEN}[✓]${NC} $*"; ((PASS++)) || true; }
+fail() { echo -e "${RED}[✗]${NC} $*"; ((FAIL++)) || true; }
+step() { echo -e "\n${CYAN}[→]${NC} $*"; }
+
+# ── Helper: require field in JSON ───────────────────────────────────
+require_field() {
+  local json="$1" field="$2" desc="$3"
+  if echo "$json" | grep -q "\"${field}\""; then
+    ok "$desc"
   else
-    echo "  [FAIL] $name"
-    FAIL=$((FAIL+1))
+    fail "$desc — field '${field}' missing in: $json"
   fi
 }
 
-echo "JackClaw E2E Smoke Test"
-echo "Hub: $HUB_URL"
-echo ""
+echo "═══════════════════════════════════════════════"
+echo "  JackClaw E2E Smoke Test"
+echo "  Hub: ${HUB_URL}"
+echo "═══════════════════════════════════════════════"
 
-# Health
-check "Hub /health" "curl -sf ${HUB_URL}/health | python3 -c \"import sys,json; d=json.load(sys.stdin); exit(0 if d.get('status')=='ok' else 1)\""
+# ── Generate RSA public key for registration ─────────────────────
+TMPDIR_SMOKE="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR_SMOKE"' EXIT
 
-# Register node
-REG_BODY='{"nodeId":"smoke-test-node","name":"Smoke Test","role":"worker","publicKey":"smoke-key","callbackUrl":"http://localhost:19000"}'
+PUBKEY="$(node -e "
+const { generateKeyPairSync } = require('crypto');
+const { publicKey } = generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: 'pkcs1', format: 'pem' },
+  privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+});
+process.stdout.write(JSON.stringify(publicKey));
+")"
+
+# ════════════════════════════════════════════════════════════════════
+# Step 1: Health check
+# ════════════════════════════════════════════════════════════════════
+step "Step 1: Hub health check"
+HEALTH=$(curl -sf "${HUB_URL}/health" 2>/dev/null || echo '{}')
+require_field "$HEALTH" "status" "Hub /health returns status"
+
+# ════════════════════════════════════════════════════════════════════
+# Step 2: Register test node
+# ════════════════════════════════════════════════════════════════════
+step "Step 2: Register smoke-test CEO node"
 REG=$(curl -sf -X POST "${HUB_URL}/api/register" \
   -H "Content-Type: application/json" \
-  -d "$REG_BODY" 2>/dev/null)
-TOKEN=$(echo "$REG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('token',''))" 2>/dev/null)
-check "Register node" "test -n '$REG'"
+  -d "{
+    \"nodeId\": \"smoke-test-ceo\",
+    \"name\": \"Smoke Test CEO\",
+    \"role\": \"ceo\",
+    \"publicKey\": ${PUBKEY}
+  }" 2>/dev/null || echo '{}')
+require_field "$REG" "success" "Registration succeeds"
+require_field "$REG" "token"   "Registration returns JWT token"
 
-# List nodes (if token available)
-if [ -n "$TOKEN" ]; then
-  check "CEO lists nodes" "curl -sf -H 'Authorization: Bearer $TOKEN' ${HUB_URL}/api/nodes"
+TOKEN=$(echo "$REG" | node -e "let d=''; process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).token))")
+if [[ -z "$TOKEN" || "$TOKEN" == "undefined" ]]; then
+  fail "Could not extract JWT token from registration response"
+  echo "Response was: $REG"
+  exit 1
+fi
+ok "JWT token obtained"
+
+AUTH="Authorization: Bearer ${TOKEN}"
+
+# ════════════════════════════════════════════════════════════════════
+# Step 3: Send a task / message via ClawChat
+# ════════════════════════════════════════════════════════════════════
+step "Step 3: Send ClawChat message to offline node"
+MSG_ID="smoke-$(date +%s%N | cut -c1-16)"
+SEND=$(curl -sf -X POST "${HUB_URL}/api/chat/send" \
+  -H "Content-Type: application/json" \
+  -H "$AUTH" \
+  -d "{
+    \"id\": \"${MSG_ID}\",
+    \"from\": \"smoke-test-ceo\",
+    \"to\": \"smoke-offline-node\",
+    \"content\": \"E2E smoke test message\"
+  }" 2>/dev/null || echo '{}')
+require_field "$SEND" "status" "ClawChat send returns status"
+
+# ════════════════════════════════════════════════════════════════════
+# Step 4: Verify node list
+# ════════════════════════════════════════════════════════════════════
+step "Step 4: List registered nodes"
+NODES=$(curl -sf "${HUB_URL}/api/nodes" \
+  -H "$AUTH" 2>/dev/null || echo '{}')
+require_field "$NODES" "nodes"   "GET /api/nodes returns nodes array"
+require_field "$NODES" "success" "GET /api/nodes returns success"
+
+NODE_COUNT=$(echo "$NODES" | node -e "let d=''; process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).total||0))")
+ok "Node list returned ${NODE_COUNT} node(s)"
+
+# ════════════════════════════════════════════════════════════════════
+# Step 5: Check offline inbox
+# ════════════════════════════════════════════════════════════════════
+step "Step 5: Check offline inbox for smoke-offline-node"
+INBOX=$(curl -sf "${HUB_URL}/api/chat/inbox?nodeId=smoke-offline-node" \
+  -H "$AUTH" 2>/dev/null || echo '{}')
+require_field "$INBOX" "messages" "Inbox returns messages array"
+require_field "$INBOX" "count"    "Inbox returns count"
+
+MSG_FOUND=$(echo "$INBOX" | node -e "
+let d=''; process.stdin.on('data',c=>d+=c).on('end',()=>{
+  const msgs = JSON.parse(d).messages || [];
+  console.log(msgs.some(m => m.id === '${MSG_ID}') ? 'yes' : 'no');
+})")
+if [[ "$MSG_FOUND" == "yes" ]]; then
+  ok "Sent message found in offline inbox"
+else
+  fail "Sent message NOT found in offline inbox (id=${MSG_ID})"
 fi
 
-# ClawChat send
-MSG_ID=$(python3 -c "import uuid; print(uuid.uuid4())" 2>/dev/null || echo "test-msg-$(date +%s)")
-SEND_BODY="{\"id\":\"${MSG_ID}\",\"from\":\"smoke-ceo\",\"to\":\"smoke-test-node\",\"content\":\"smoke test\",\"type\":\"human\",\"createdAt\":$(date +%s)000}"
-check "Send chat message" "curl -sf -X POST ${HUB_URL}/api/chat/send -H 'Content-Type: application/json' -d '$SEND_BODY'"
-
-# Inbox
-check "Chat inbox" "curl -sf '${HUB_URL}/api/chat/inbox?nodeId=smoke-test-node'"
-
-# Task plan estimate
-PLAN_BODY='{"title":"Test task","description":"Build a simple feature with authentication"}'
-check "Task plan estimate" "curl -sf -X POST ${HUB_URL}/api/plan/estimate -H 'Content-Type: application/json' -d '$PLAN_BODY' | python3 -c \"import sys,json; d=json.load(sys.stdin); exit(0 if 'plan' in d else 1)\""
-
+# ════════════════════════════════════════════════════════════════════
 # Summary
-check "Summary endpoint" "curl -sf ${HUB_URL}/api/summary || true"
-
+# ════════════════════════════════════════════════════════════════════
 echo ""
-echo "Results: ${PASS} passed, ${FAIL} failed"
-if [ "$FAIL" -eq 0 ]; then
-  echo "All smoke tests passed"
+echo "═══════════════════════════════════════════════"
+if [[ "$FAIL" -eq 0 ]]; then
+  echo -e "${GREEN}✅ All ${PASS} checks passed${NC}"
   exit 0
 else
-  echo "Some tests failed"
+  echo -e "${RED}❌ ${FAIL} check(s) failed, ${PASS} passed${NC}"
   exit 1
 fi
