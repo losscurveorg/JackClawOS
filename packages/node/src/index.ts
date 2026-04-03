@@ -73,6 +73,40 @@ async function main() {
     console.log('[harness] Package not available in this environment, skipping')
   }
 
+  // 3b. Memory sync — startup pull + every 6 hours
+  const memManager = new MemoryManager()
+  const memSync = new MemDirSync(identity.nodeId)
+
+  async function runMemorySync() {
+    if (!config.visibility.shareMemory) return
+    try {
+      // push local shared project/reference entries to Hub
+      const { entries } = memManager.syncSummary(identity.nodeId)
+      await memSync.push(entries, config.hubUrl)
+      // pull other nodes' entries and merge into local shared scope
+      const remote = await memSync.pull(identity.nodeId, config.hubUrl)
+      for (const e of remote) {
+        // avoid duplicates: skip if same id already stored locally
+        const existing = memManager.query(identity.nodeId, { scope: 'shared' })
+        if (!existing.some(x => x.id === e.id)) {
+          memManager.save({ ...e, nodeId: identity.nodeId, scope: 'shared' })
+        }
+      }
+      console.log(`[memory-sync] done — pushed ${entries.length}, pulled ${remote.length}`)
+    } catch (err: any) {
+      console.error('[memory-sync] error:', err.message)
+    }
+  }
+
+  // pull once at startup
+  runMemorySync().catch(() => {})
+
+  // repeat every 6 hours
+  cron.schedule('0 */6 * * *', () => {
+    runMemorySync().catch(() => {})
+  })
+  console.log('[cron] Memory sync scheduled: every 6 hours')
+
   // 3. Schedule daily report
   if (!cron.validate(config.reportCron)) {
     console.error(`[cron] Invalid cron expression: "${config.reportCron}", using default "0 8 * * *"`)

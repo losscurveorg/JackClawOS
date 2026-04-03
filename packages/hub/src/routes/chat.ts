@@ -13,7 +13,7 @@ import { Router, Request, Response } from 'express'
 import { WebSocketServer, WebSocket } from 'ws'
 import { IncomingMessage } from 'http'
 import { ChatStore } from '../store/chat'
-import type { ChatMessage } from '../store/chat'
+import type { ChatMessage, ChatGroup } from '../store/chat'
 
 const router = Router()
 const store = new ChatStore()
@@ -34,18 +34,26 @@ router.post('/send', (req: Request, res: Response) => {
 
   store.saveMessage(msg)
 
-  const targets = Array.isArray(msg.to) ? msg.to : [msg.to]
+  // 如果 to 是群组 ID，展开为成员列表（排除发送方自己）
+  const toId = Array.isArray(msg.to) ? msg.to[0] : msg.to
+  const group = store.getGroup(toId)
+  const targets = group
+    ? group.members.filter(m => m !== msg.from)
+    : (Array.isArray(msg.to) ? msg.to : [msg.to])
+
   const delivered: string[] = []
   const queued: string[] = []
 
   for (const target of targets) {
+    const payload = group
+      ? { ...msg, groupId: group.groupId, groupName: group.name }
+      : msg
     const ws = wsClients.get(target)
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ event: 'message', data: msg }))
+      ws.send(JSON.stringify({ event: 'message', data: payload }))
       delivered.push(target)
     } else {
-      // 离线：入队等待拉取
-      store.queueForOffline(target, msg)
+      store.queueForOffline(target, payload as ChatMessage)
       queued.push(target)
     }
   }
@@ -91,6 +99,29 @@ router.post('/thread', (req: Request, res: Response) => {
   res.json({ thread })
 })
 
+// 创建群组
+router.post('/group/create', (req: Request, res: Response) => {
+  const { name, members, topic } = req.body
+  const nodeId = req.query.nodeId as string | undefined
+  const createdBy = (req.body.createdBy ?? nodeId) as string | undefined
+  if (!name || !Array.isArray(members) || members.length < 2 || !createdBy) {
+    res.status(400).json({ error: 'name, members (2+), and createdBy required' })
+    return
+  }
+  const group = store.createGroup(name, members, createdBy, topic)
+  res.json({ group })
+})
+
+// 列出我参与的群组
+router.get('/groups', (req: Request, res: Response) => {
+  const nodeId = req.query.nodeId as string
+  if (!nodeId) {
+    res.status(400).json({ error: 'nodeId required' })
+    return
+  }
+  res.json({ groups: store.listGroups(nodeId) })
+})
+
 export { router as chatRouter }
 
 // ─── WebSocket 服务 ───────────────────────────────────────────────────────────
@@ -122,14 +153,24 @@ export function attachChatWss(server: import('http').Server): WebSocketServer {
         const msg = JSON.parse(raw.toString()) as ChatMessage
         store.saveMessage(msg)
 
-        // 转发给目标
-        const targets = Array.isArray(msg.to) ? msg.to : [msg.to]
+        // 查询是否是群组消息
+        const toId = Array.isArray(msg.to) ? msg.to[0] : msg.to
+        const group = store.getGroup(toId)
+
+        // 确定实际投递目标（群组展开成员，个人保持原逻辑）
+        const targets = group
+          ? group.members.filter(m => m !== msg.from)
+          : (Array.isArray(msg.to) ? msg.to : [msg.to])
+
         for (const target of targets) {
+          const payload = group
+            ? { ...msg, groupId: group.groupId, groupName: group.name }
+            : msg
           const targetWs = wsClients.get(target)
           if (targetWs && targetWs.readyState === WebSocket.OPEN) {
-            targetWs.send(JSON.stringify({ event: 'message', data: msg }))
+            targetWs.send(JSON.stringify({ event: 'message', data: payload }))
           } else {
-            store.queueForOffline(target, msg)
+            store.queueForOffline(target, payload as ChatMessage)
           }
         }
 

@@ -7,6 +7,7 @@ import { getOwnerMemoryAuth } from './owner-memory-auth'
 import { getOwnerMemory } from './owner-memory'
 import { TaskPlanner, formatPlan } from './task-planner'
 import { createOwnerAuthRouter } from './routes/owner-auth'
+import { WorkloadTracker } from './workload-tracker'
 
 // Harness runner 接口（运行时注入，避免编译期跨包依赖）
 export type HarnessRunner = (opts: {
@@ -25,9 +26,12 @@ export function registerHarnessRunner(runner: HarnessRunner): void {
 export function createServer(identity: NodeIdentity, config: JackClawConfig) {  const app = express()
   app.use(express.json({ limit: '1mb' }))
 
+  // Workload tracker — scoped to this server instance
+  const workloadTracker = new WorkloadTracker(identity.nodeId)
+
   // ── Health check ────────────────────────────────────────────────────────────
   app.get('/health', (_req: Request, res: Response) => {
-    res.json({ status: 'ok', nodeId: identity.nodeId, ts: Date.now() })
+    res.json({ status: 'ok', nodeId: identity.nodeId, ts: Date.now(), workload: workloadTracker.getSnapshot() })
   })
 
   // ── Receive task from Hub ───────────────────────────────────────────────────

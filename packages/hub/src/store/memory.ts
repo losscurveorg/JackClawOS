@@ -1,6 +1,6 @@
-// Hub 侧 L3 内存存储 — org 共享记忆 + 协作会话
+// Hub 侧 L3 内存存储 — org 共享记忆 + 协作会话 + 跨节点 MemDir 同步
 
-import type { MemoryEntry, NodeRef, CollabSessionState } from '@jackclaw/memory'
+import type { MemoryEntry, NodeRef, CollabSessionState, MemDir } from '@jackclaw/memory'
 
 const orgMemories: Map<string, MemoryEntry> = new Map()
 const collabSessions: Map<string, CollabSessionState> = new Map()
@@ -52,4 +52,30 @@ export function endCollabSession(id: string, mode: string): CollabSessionState |
   session.endMode = mode as CollabSessionState['endMode']
   collabSessions.delete(id)
   return session
+}
+
+// ── 跨节点 MemDir 同步 ─────────────────────────────────────────────────────
+
+/** nodeId → 该节点推送来的 MemDir 条目（project/reference） */
+const nodeSyncedMemories: Map<string, MemDir[]> = new Map()
+
+/** 存储某节点推送的 MemDir 条目（覆盖旧数据） */
+export function storeNodeMemDirs(nodeId: string, entries: MemDir[]): void {
+  nodeSyncedMemories.set(nodeId, entries)
+}
+
+/**
+ * 返回除 requestingNodeId 以外所有节点的共享 MemDir 条目。
+ * 只对外暴露 project/reference 类型（push 端已过滤，此处双重保险）。
+ */
+export function getSharedMemDirs(requestingNodeId: string): MemDir[] {
+  const SYNCABLE: Array<MemDir['type']> = ['project', 'reference']
+  const result: MemDir[] = []
+  for (const [nodeId, entries] of nodeSyncedMemories.entries()) {
+    if (nodeId === requestingNodeId) continue
+    for (const e of entries) {
+      if (SYNCABLE.includes(e.type)) result.push(e)
+    }
+  }
+  return result
 }

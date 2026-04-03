@@ -278,6 +278,80 @@ function buildMySessionsTool(nodeId: string): OpenClawTool {
   }
 }
 
+/**
+ * jackclaw_plan_task — 为开发任务生成结构化执行计划
+ *
+ * 调用 Hub POST /api/plan/estimate，返回耗时、Token 成本、并行策略的
+ * 格式化执行计划。
+ */
+function buildPlanTaskTool(): OpenClawTool {
+  return {
+    name: 'jackclaw_plan_task',
+    description:
+      'Generate execution plan for a development task: estimated time, token cost, parallel strategy',
+    parameters: {
+      type: 'object',
+      required: ['title', 'description'],
+      properties: {
+        title: {
+          type: 'string',
+          description: 'Task title',
+        },
+        description: {
+          type: 'string',
+          description: 'Task description',
+        },
+      },
+    },
+    async handler(params) {
+      const p = params as { title: string; description: string }
+      const result = await hubRequest<{
+        plan: {
+          taskId: string
+          title: string
+          complexity: string
+          estimatedMinutesSerial: number
+          estimatedMinutesParallel: number
+          parallelSpeedup: number
+          estimatedTotalTokens: number
+          estimatedCostUsd: number
+          needsParallel: boolean
+          suggestedAgentCount: number
+          subtasks: unknown[]
+          parallelBatches: unknown[]
+          overallRisk: string
+          risks: string[]
+          plannerVersion: string
+          plannedAt: number
+        }
+        note?: string
+      }>('POST', '/api/plan/estimate', {
+        title: p.title,
+        description: p.description,
+      })
+
+      const plan = result.plan
+      const lines: string[] = [
+        `📋 执行计划：${plan.title}`,
+        ``,
+        `复杂度：${plan.complexity}  |  风险：${plan.overallRisk}`,
+        `预估耗时：串行 ${plan.estimatedMinutesSerial}min / 并行 ${plan.estimatedMinutesParallel}min（加速 ${plan.parallelSpeedup}x）`,
+        `Token 消耗：~${plan.estimatedTotalTokens.toLocaleString()} tokens（$${plan.estimatedCostUsd}）`,
+        `建议 Agent 数：${plan.suggestedAgentCount}${plan.needsParallel ? '（建议并行）' : ''}`,
+      ]
+      if (plan.risks.length > 0) {
+        lines.push(``, `风险点：`, ...plan.risks.map(r => `  • ${r}`))
+      }
+      if (result.note) {
+        lines.push(``, `注：${result.note}`)
+      }
+      const formatted = lines.join('\n')
+
+      return { plan: result.plan, formatted }
+    },
+  }
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**

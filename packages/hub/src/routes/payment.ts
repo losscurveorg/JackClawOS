@@ -6,7 +6,7 @@
 // GET  /api/payment/audit/:nodeId  — Read-only audit log
 
 import { Router, Request, Response } from 'express'
-import { PaymentVault } from '@jackclaw/payment-vault'
+import { PaymentVault, isSandboxMode } from '@jackclaw/payment-vault'
 import type { Jurisdiction } from '@jackclaw/protocol'
 
 // Singleton vault instance — configured from environment
@@ -48,7 +48,7 @@ router.post('/submit', (req: Request, res: Response): void => {
       metadata: (body.metadata as Record<string, unknown>) || {},
     })
 
-    res.status(201).json({ payment })
+    res.status(201).json({ payment, sandboxMode: isSandboxMode })
   } catch (err) {
     res.status(500).json({ error: (err as Error).message })
   }
@@ -61,7 +61,7 @@ router.post('/submit', (req: Request, res: Response): void => {
 router.get('/pending', (_req: Request, res: Response): void => {
   try {
     const requests = vault.getPending()
-    res.json({ requests })
+    res.json({ requests, sandboxMode: isSandboxMode })
   } catch (err) {
     res.status(500).json({ error: (err as Error).message })
   }
@@ -83,7 +83,7 @@ router.post('/approve/:requestId', (req: Request, res: Response): void => {
 
   try {
     const payment = vault.humanApprove(requestId, humanToken)
-    res.json({ payment })
+    res.json({ payment, sandboxMode: isSandboxMode })
   } catch (err) {
     const msg = (err as Error).message
     if (msg.includes('not found')) {
@@ -114,7 +114,7 @@ router.post('/reject/:requestId', (req: Request, res: Response): void => {
 
   try {
     const payment = vault.humanReject(requestId, humanToken, reason || 'Rejected by human')
-    res.json({ payment })
+    res.json({ payment, sandboxMode: isSandboxMode })
   } catch (err) {
     const msg = (err as Error).message
     if (msg.includes('not found')) {
@@ -136,7 +136,7 @@ router.get('/audit/:nodeId', (req: Request, res: Response): void => {
 
   try {
     const entries = vault.getAuditLog(nodeId)
-    res.json({ entries })
+    res.json({ entries, sandboxMode: isSandboxMode })
   } catch (err) {
     res.status(500).json({ error: (err as Error).message })
   }

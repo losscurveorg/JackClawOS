@@ -20,6 +20,9 @@
 const DEFAULT_HUB_URL = process.env['JACKCLAW_HUB_URL'] ?? 'http://localhost:3100'
 const CEO_TOKEN = process.env['JACKCLAW_CEO_TOKEN'] ?? ''
 
+/** Keywords that indicate the owner is busy or under high pressure */
+const BUSY_KEYWORDS = ['忙碌', '高压', '繁忙', '压力', '疲惫', '紧张', '响应较慢', 'busy', 'stressed', 'overloaded']
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface SharedMemoryEntry {
@@ -47,6 +50,37 @@ export interface WatchdogAlert {
   message: string
   triggeredAt: number
   acknowledged: boolean
+}
+
+// ─── OwnerMemory local file types ─────────────────────────────────────────────
+
+interface OwnerMemoryEntry {
+  id: string
+  type: string
+  content: string
+  confidence: number
+  source: string
+  createdAt: number
+  updatedAt: number
+  expiresAt?: number
+  tags?: string[]
+}
+
+interface OwnerMemoryProfile {
+  nodeId: string
+  ownerName: string
+  entries: OwnerMemoryEntry[]
+  lastUpdated: number
+}
+
+export interface PendingAuthRequest {
+  requestId: string
+  clientId: string
+  clientName: string
+  productType: string
+  requestedScopes: string[]
+  reason: string
+  requestedAt: number
 }
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
@@ -105,16 +139,89 @@ async function readLocalMemory(nodeId: string): Promise<SharedMemoryEntry[]> {
 export async function onHeartbeat(nodeId: string, hubUrl: string = DEFAULT_HUB_URL): Promise<void> {
   const entries = await readLocalMemory(nodeId)
 
-  if (entries.length === 0) {
-    // Nothing to sync — Hub will retain the previous snapshot.
-    return
+  if (entries.length > 0) {
+    await hubRequest<{ ok: boolean }>('PUT', `/api/nodes/${nodeId}/memory`, {
+      nodeId,
+      entries,
+      syncedAt: Date.now(),
+    })
   }
 
-  await hubRequest<{ ok: boolean }>('PUT', `/api/nodes/${nodeId}/memory`, {
-    nodeId,
-    entries,
-    syncedAt: Date.now(),
-  })
+  // Check owner emotional state; emit a note if busy/high-pressure
+  const stateNote = await checkOwnerEmotionalState(nodeId)
+  if (stateNote) {
+    emitNotification(stateNote)
+  }
+
+  // Push reminders for any pending OwnerMemory auth requests
+  await checkPendingAuthRequests(nodeId)
+}
+
+/**
+ * checkOwnerEmotionalState — 检查主人当前情绪/忙碌状态（有效期内）
+ *
+ * 读取 ~/.jackclaw/owner-memory/{nodeId}.json 中 type==="emotional-state"
+ * 的未过期条目。如果内容指示主人处于忙碌/高压状态，返回提示文本。
+ * 调用方可将该文本附加到 heartbeat 响应中。
+ */
+export async function checkOwnerEmotionalState(nodeId: string): Promise<string | null> {
+  const os = await import('os')
+  const path = await import('path')
+  const fs = await import('fs/promises')
+
+  const filePath = path.join(os.homedir(), '.jackclaw', 'owner-memory', `${nodeId}.json`)
+  try {
+    const raw = await fs.readFile(filePath, 'utf8')
+    const profile = JSON.parse(raw) as OwnerMemoryProfile
+    const now = Date.now()
+
+    const activeStates = profile.entries.filter(
+      e => e.type === 'emotional-state' && (!e.expiresAt || e.expiresAt > now),
+    )
+    if (activeStates.length === 0) return null
+
+    const busyEntry = activeStates.find(e =>
+      BUSY_KEYWORDS.some(kw => e.content.toLowerCase().includes(kw.toLowerCase())),
+    )
+    if (busyEntry) {
+      return `⚠️ 主人当前状态：${busyEntry.content}，请保持简明扼要。`
+    }
+  } catch {
+    // File not found or parse error — degrade gracefully
+  }
+  return null
+}
+
+/**
+ * checkPendingAuthRequests — 检查待审批的 OwnerMemory 授权申请
+ *
+ * 读取 ~/.jackclaw/owner-memory/auth/{nodeId}.json 中的 pendingRequests 列表，
+ * 对每条待审批申请通过 emitNotification 推送提醒。
+ */
+export async function checkPendingAuthRequests(nodeId: string): Promise<void> {
+  const os = await import('os')
+  const path = await import('path')
+  const fs = await import('fs/promises')
+
+  const filePath = path.join(os.homedir(), '.jackclaw', 'owner-memory', 'auth', `${nodeId}.json`)
+  try {
+    const raw = await fs.readFile(filePath, 'utf8')
+    const data = JSON.parse(raw) as { pendingRequests?: PendingAuthRequest[] }
+    const pending = data.pendingRequests ?? []
+    if (pending.length === 0) return
+
+    for (const req of pending) {
+      const scopeStr = req.requestedScopes.join(', ')
+      const text =
+        `🔐 OwnerMemory 授权申请\n` +
+        `有新的授权申请：${req.clientName} 申请 ${scopeStr}\n` +
+        `原因：${req.reason}\n\n` +
+        `回复 /jackclaw auth approve ${req.requestId} 或 deny ${req.requestId} 处理。`
+      emitNotification(text)
+    }
+  } catch {
+    // File not found — no pending requests
+  }
 }
 
 /**

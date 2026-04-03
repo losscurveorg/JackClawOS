@@ -4,6 +4,15 @@
 
 import { randomUUID } from 'crypto'
 
+export interface ChatGroup {
+  groupId: string
+  name: string
+  members: string[]    // nodeId 列表
+  createdBy: string
+  createdAt: number
+  topic?: string
+}
+
 export type ChatMessageType =
   | 'human'
   | 'task'
@@ -53,6 +62,7 @@ export class ChatStore {
   private messages: Map<string, ChatMessage> = new Map()
   private threads: Map<string, ChatThread> = new Map()
   private inbox: Map<string, ChatMessage[]> = new Map()
+  private groups: Map<string, ChatGroup> = new Map()
   // nodeId → 活跃时间统计（轻量观察，不做深度分析）
   private activityLog: Map<string, number[]> = new Map()
 
@@ -119,5 +129,30 @@ export class ChatStore {
 
   getActivityLog(nodeId: string): number[] {
     return this.activityLog.get(nodeId) ?? []
+  }
+
+  // ─── 群组管理 ─────────────────────────────────────────────────────────────────
+
+  createGroup(name: string, members: string[], createdBy: string, topic?: string): ChatGroup {
+    const group: ChatGroup = {
+      groupId: randomUUID(),
+      name,
+      members,
+      createdBy,
+      createdAt: Date.now(),
+      topic,
+    }
+    this.groups.set(group.groupId, group)
+    return group
+  }
+
+  getGroup(groupId: string): ChatGroup | null {
+    return this.groups.get(groupId) ?? null
+  }
+
+  listGroups(nodeId: string): ChatGroup[] {
+    return [...this.groups.values()]
+      .filter(g => g.members.includes(nodeId))
+      .sort((a, b) => b.createdAt - a.createdAt)
   }
 }

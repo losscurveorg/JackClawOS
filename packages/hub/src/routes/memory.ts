@@ -2,7 +2,8 @@
 
 import { Router } from 'express'
 import { randomUUID as nanoid } from 'crypto'
-import type { MemoryEntry } from '@jackclaw/memory'
+import crypto from 'crypto'
+import type { MemoryEntry, MemDir } from '@jackclaw/memory'
 import {
   broadcastMemory,
   getOrgMemories,
@@ -11,6 +12,8 @@ import {
   createCollabSession,
   syncCollabSession,
   endCollabSession,
+  storeNodeMemDirs,
+  getSharedMemDirs,
 } from '../store/memory.js'
 
 const router = Router()
@@ -104,6 +107,61 @@ router.post('/collab/:id/end', (req, res) => {
     return
   }
   res.json({ entries: session.entries })
+})
+
+// ── 跨节点 MemDir 同步 ────────────────────────────────────────────────────
+
+function getSyncSecret(): string {
+  return process.env.JACKCLAW_SYNC_SECRET ?? process.env.JWT_SECRET ?? ''
+}
+
+function verifySyncSig(payload: string, sig: string): boolean {
+  const secret = getSyncSecret()
+  if (!secret) return false
+  const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex')
+  // 使用 timingSafeEqual 防止时序攻击
+  try {
+    return crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(expected, 'hex'))
+  } catch {
+    return false
+  }
+}
+
+// POST /memory/push — 节点推送 MemDir 条目到 Hub
+router.post('/push', (req, res) => {
+  const sig = req.headers['x-sync-sig'] as string | undefined
+  const rawBody = JSON.stringify(req.body)
+  if (!sig || !verifySyncSig(rawBody, sig)) {
+    res.status(401).json({ error: 'Invalid or missing HMAC signature' })
+    return
+  }
+
+  const { nodeId, entries } = req.body as { nodeId: string; entries: MemDir[] }
+  if (!nodeId || !Array.isArray(entries)) {
+    res.status(400).json({ error: 'nodeId and entries[] required' })
+    return
+  }
+
+  storeNodeMemDirs(nodeId, entries)
+  res.json({ ok: true, stored: entries.length })
+})
+
+// GET /memory/pull?nodeId=xxx&ts=yyy — 拉取其他节点共享的 MemDir 条目
+router.get('/pull', (req, res) => {
+  const sig = req.headers['x-sync-sig'] as string | undefined
+  const query = req.url.split('?')[1] ?? ''
+  if (!sig || !verifySyncSig(query, sig)) {
+    res.status(401).json({ error: 'Invalid or missing HMAC signature' })
+    return
+  }
+
+  const nodeId = req.query['nodeId'] as string | undefined
+  if (!nodeId) {
+    res.status(400).json({ error: 'nodeId query param required' })
+    return
+  }
+
+  res.json({ entries: getSharedMemDirs(nodeId) })
 })
 
 export default router

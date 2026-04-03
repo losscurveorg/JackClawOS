@@ -97,7 +97,7 @@ async function collectAnswers(nameArg?: string): Promise<Answers> {
         name: 'projectName',
         message: 'Project name:',
         initial: `my-jackclaw-${templateType}`,
-        validate: (v) => v.length > 0 || 'Required',
+        validate: (v: string) => v.length > 0 || 'Required',
       })
 
   const { description } = await prompt<{ description: string }>({

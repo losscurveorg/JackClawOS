@@ -96,7 +96,12 @@ export const ChatPanel: React.FC<Props> = ({ token, nodeId }) => {
       setSending(false);
     } else {
       try {
-        const res = await api.chat.send(token, { nodeId, content: text, threadId: activeThreadId ?? undefined });
+        const res = await api.chat.send(token, {
+          nodeId,
+          content: text,
+          threadId: activeThreadId ?? undefined,
+          type: msgType,
+        });
         setActiveThreadId(res.threadId);
         setHistMessages(prev => [...prev, res.message]);
       } catch {
@@ -105,7 +110,7 @@ export const ChatPanel: React.FC<Props> = ({ token, nodeId }) => {
         setSending(false);
       }
     }
-  }, [inputText, nodeId, token, connected, wsSend, activeThreadId]);
+  }, [inputText, nodeId, token, connected, wsSend, activeThreadId, msgType]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -179,6 +184,17 @@ export const ChatPanel: React.FC<Props> = ({ token, nodeId }) => {
         </div>
 
         <div className="chat-input-bar">
+          <div className="msg-type-selector">
+            {(['human', 'task', 'ask'] as MsgType[]).map(t => (
+              <button
+                key={t}
+                className={`msg-type-btn ${msgType === t ? 'msg-type-active' : ''}`}
+                onClick={() => setMsgType(t)}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
           <textarea
             ref={inputRef}
             className="chat-input"

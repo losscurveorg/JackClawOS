@@ -7,28 +7,30 @@ export type TeachingState = "pending" | "active" | "completed" | "rejected" | "e
 
 export interface TeachingRequest {
   id: string
-  from: string          // 学习方 nodeId
-  to: string            // 教学方 nodeId
+  from: string        // 学习方 nodeId
+  to: string          // 教学方 nodeId
   topic: string
-  clearAfterSession: boolean
-  requestedAt: number
+  clearAfterSession: boolean  // 是否在 session 结束后清除教学记忆
+  createdAt: number
   expiresAt: number
-}
-
-export interface KnowledgeEntry {
-  key: string
-  value: string
-  confidence: number    // 0-1
 }
 
 export interface TeachingSession {
   id: string
   request: TeachingRequest
   state: TeachingState
-  memoryScope: string   // "teaching-{id}"，独立目录
-  knowledge: KnowledgeEntry[]
+  memoryScope: string   // teaching-{sessionId}，独立目录
+  knowledgeItems: KnowledgeItem[]
   startedAt?: number
   completedAt?: number
+}
+
+export interface KnowledgeItem {
+  id: string
+  topic: string
+  content: string
+  type: "concept" | "procedure" | "example" | "rule"
+  addedAt: number
 }
 
 export class TeachingProtocol {
@@ -41,71 +43,67 @@ export class TeachingProtocol {
     this.load()
   }
 
-  createRequest(to: string, topic: string, clearAfterSession = true): TeachingRequest {
+  createRequest(opts: { to: string; topic: string; clearAfterSession?: boolean }): TeachingRequest {
     const req: TeachingRequest = {
       id: crypto.randomUUID(),
       from: this.nodeId,
-      to,
-      topic,
-      clearAfterSession,
-      requestedAt: Date.now(),
-      expiresAt: Date.now() + 30 * 60 * 1000, // 30min
+      to: opts.to,
+      topic: opts.topic,
+      clearAfterSession: opts.clearAfterSession ?? true,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 30 * 60 * 1000,  // 30分钟
     }
-    const session: TeachingSession = {
-      id: req.id,
-      request: req,
-      state: "pending",
-      memoryScope: `teaching-${req.id}`,
-      knowledge: [],
-    }
-    this.sessions.set(req.id, session)
-    this.save()
     return req
   }
 
-  accept(sessionId: string): void {
-    const s = this.sessions.get(sessionId)
-    if (!s || s.state !== "pending") return
-    s.state = "active"
-    s.startedAt = Date.now()
-    // 创建独立教学记忆目录
-    fs.mkdirSync(path.join(this.storePath, s.memoryScope), { recursive: true })
+  acceptRequest(request: TeachingRequest): TeachingSession {
+    const session: TeachingSession = {
+      id: crypto.randomUUID(),
+      request,
+      state: "active",
+      memoryScope: `teaching-${crypto.randomUUID().slice(0, 8)}`,
+      knowledgeItems: [],
+      startedAt: Date.now(),
+    }
+    this.sessions.set(session.id, session)
+    // 创建独立 memory 目录
+    fs.mkdirSync(path.join(this.storePath, session.memoryScope), { recursive: true })
+    this.save()
+    return session
+  }
+
+  rejectRequest(requestId: string): void {
+    // 通知发起方被拒绝（通过 ClawChat）
+    console.log(`[teaching] Request ${requestId} rejected`)
+  }
+
+  addKnowledge(sessionId: string, item: Omit<KnowledgeItem, "id" | "addedAt">): void {
+    const session = this.sessions.get(sessionId)
+    if (!session || session.state !== "active") throw new Error("Session not active")
+    const knowledge: KnowledgeItem = { ...item, id: crypto.randomUUID(), addedAt: Date.now() }
+    session.knowledgeItems.push(knowledge)
+    // 写入独立 memory 目录
+    const memDir = path.join(this.storePath, session.memoryScope)
+    fs.appendFileSync(path.join(memDir, "knowledge.jsonl"), JSON.stringify(knowledge) + "\n")
     this.save()
   }
 
-  reject(sessionId: string): void {
-    const s = this.sessions.get(sessionId)
-    if (s) { s.state = "rejected"; this.save() }
-  }
-
-  addKnowledge(sessionId: string, entries: KnowledgeEntry[]): void {
-    const s = this.sessions.get(sessionId)
-    if (!s || s.state !== "active") return
-    s.knowledge.push(...entries)
-    // 写入独立教学记忆目录
-    const file = path.join(this.storePath, s.memoryScope, "knowledge.jsonl")
-    const lines = entries.map(e => JSON.stringify(e)).join("\n") + "\n"
-    fs.appendFileSync(file, lines)
-    this.save()
-  }
-
-  complete(sessionId: string): KnowledgeEntry[] {
-    const s = this.sessions.get(sessionId)
-    if (!s || s.state !== "active") return []
-    s.state = "completed"
-    s.completedAt = Date.now()
-    const knowledge = [...s.knowledge]
-    if (s.request.clearAfterSession) {
-      // 清除独立教学记忆目录（隐私保护）
-      fs.rmSync(path.join(this.storePath, s.memoryScope), { recursive: true, force: true })
-      console.log(`[teaching] Cleared teaching memory: ${s.memoryScope}`)
+  complete(sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) throw new Error("Session not found")
+    session.state = "completed"
+    session.completedAt = Date.now()
+    if (session.request.clearAfterSession) {
+      // 清除教学记忆（隐私保护）
+      const memDir = path.join(this.storePath, session.memoryScope)
+      fs.rmSync(memDir, { recursive: true, force: true })
+      console.log(`[teaching] Memory cleared for session ${sessionId}`)
     }
     this.save()
-    return knowledge
   }
 
-  getSessions(state?: TeachingState): TeachingSession[] {
-    return [...this.sessions.values()].filter(s => !state || s.state === state)
+  getActiveSessions(): TeachingSession[] {
+    return [...this.sessions.values()].filter(s => s.state === "active")
   }
 
   private load(): void {

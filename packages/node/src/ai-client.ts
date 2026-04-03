@@ -210,6 +210,53 @@ export class AiClient {
     return this.cache.getSavingsReport(period)
   }
 
+  // ── OrgNorm 注入 ─────────────────────────────────────────────────────────────
+
+  /** 从 Hub 拉取 OrgNorm 的缓存（5 分钟 TTL） */
+  private _normCache: { inject: string; fetchedAt: number } | null = null
+  private readonly NORM_TTL_MS = 5 * 60 * 1000   // 5 minutes
+
+  /**
+   * callWithNorms — 自动从 Hub 拉取当前 OrgNorm 并注入 system prompt，然后执行 AI 调用。
+   * 拉取结果缓存 5 分钟，避免每次都发 HTTP 请求。
+   */
+  async callWithNorms(opts: AiCallOptions & { role?: string }): Promise<AiCallResult> {
+    const inject = await this._fetchNormInject(opts.role ?? 'worker')
+    const enrichedSystem = inject
+      ? `${inject}\n\n${opts.systemPrompt}`
+      : opts.systemPrompt
+
+    return this.call({ ...opts, systemPrompt: enrichedSystem })
+  }
+
+  private async _fetchNormInject(role: string): Promise<string> {
+    const now = Date.now()
+    if (this._normCache && now - this._normCache.fetchedAt < this.NORM_TTL_MS) {
+      return this._normCache.inject
+    }
+
+    const hubUrl = this.config.hubUrl
+    try {
+      const res = await fetch(`${hubUrl}/api/org-norm?role=${encodeURIComponent(role)}`, {
+        headers: { 'Authorization': `Bearer ${(this.config as any).hubToken ?? ''}` },
+      })
+      if (!res.ok) {
+        console.warn(`[ai-client] OrgNorm fetch failed: ${res.status}`)
+        return ''
+      }
+      const data = await res.json() as { norms?: Array<{ rule: string }> }
+      const norms = data.norms ?? []
+      const inject = norms.length > 0
+        ? `ORGANIZATION NORMS:\n${norms.map(n => `- ${n.rule}`).join('\n')}`
+        : ''
+      this._normCache = { inject, fetchedAt: now }
+      return inject
+    } catch (err) {
+      console.warn('[ai-client] OrgNorm fetch error:', (err as Error).message)
+      return ''
+    }
+  }
+
   private async ensureCapabilityProbed(): Promise<void> {
     const { ai } = this.config
     const now = Date.now()
