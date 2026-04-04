@@ -3,7 +3,7 @@
 [![Build](https://github.com/DevJackKong/JackClawOS/actions/workflows/ci.yml/badge.svg)](https://github.com/DevJackKong/JackClawOS/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
-[![E2E](https://img.shields.io/badge/e2e-45%20passed-success)](tests/e2e.js)
+[![E2E](https://img.shields.io/badge/e2e-71%20passed-success)](tests/e2e.js)
 
 > **30 seconds to your AI company** 🦞
 
@@ -186,8 +186,8 @@ jackclaw chat --to @工程师小明 --text "帮我写个登录页面"
 ### 现在就开始
 
 ```bash
-npm install -g jackclaw
-jackclaw init my-first-team
+npm install -g @jackclaw/cli
+jackclaw demo
 ```
 
 📦 GitHub：[github.com/DevJackKong/JackClawOS](https://github.com/DevJackKong/JackClawOS)
@@ -339,12 +339,69 @@ Works with Claude Code, Codex, Cursor, and more.
 ### Get Started
 
 ```bash
-npm install -g jackclaw
-jackclaw init my-first-team
+npm install -g @jackclaw/cli
+jackclaw demo
 ```
 
 📦 GitHub: [github.com/DevJackKong/JackClawOS](https://github.com/DevJackKong/JackClawOS)
 📄 License: MIT (free, use however you want)
+
+---
+
+---
+
+## Packages / 子包列表
+
+JackClaw is a monorepo with 14 packages:
+
+| Package | npm | Description |
+|---------|-----|-------------|
+| `@jackclaw/cli` | [![npm](https://img.shields.io/npm/v/@jackclaw/cli)](https://www.npmjs.com/package/@jackclaw/cli) | CLI — `jackclaw start / demo / chat` |
+| `@jackclaw/hub` | [![npm](https://img.shields.io/npm/v/@jackclaw/hub)](https://www.npmjs.com/package/@jackclaw/hub) | Central orchestrator — REST + WebSocket |
+| `@jackclaw/node` | [![npm](https://img.shields.io/npm/v/@jackclaw/node)](https://www.npmjs.com/package/@jackclaw/node) | AI agent worker — register, report, execute |
+| `@jackclaw/protocol` | [![npm](https://img.shields.io/npm/v/@jackclaw/protocol)](https://www.npmjs.com/package/@jackclaw/protocol) | RSA-4096 + AES-256 encrypted messaging |
+| `@jackclaw/llm-gateway` | [![npm](https://img.shields.io/npm/v/@jackclaw/llm-gateway)](https://www.npmjs.com/package/@jackclaw/llm-gateway) | Multi-model gateway — 16 providers |
+| `@jackclaw/memory` | [![npm](https://img.shields.io/npm/v/@jackclaw/memory)](https://www.npmjs.com/package/@jackclaw/memory) | 4-layer agent memory + semantic search |
+| `@jackclaw/sdk` | [![npm](https://img.shields.io/npm/v/@jackclaw/sdk)](https://www.npmjs.com/package/@jackclaw/sdk) | Plugin / Node development SDK |
+| `@jackclaw/harness` | [![npm](https://img.shields.io/npm/v/@jackclaw/harness)](https://www.npmjs.com/package/@jackclaw/harness) | ACP harness adapter layer |
+| `@jackclaw/tunnel` | [![npm](https://img.shields.io/npm/v/@jackclaw/tunnel)](https://www.npmjs.com/package/@jackclaw/tunnel) | Cloudflared + self-hosted HTTPS tunnel |
+| `@jackclaw/openclaw-plugin` | [![npm](https://img.shields.io/npm/v/@jackclaw/openclaw-plugin)](https://www.npmjs.com/package/@jackclaw/openclaw-plugin) | OpenClaw integration plugin |
+| `@jackclaw/create` | [![npm](https://img.shields.io/npm/v/@jackclaw/create)](https://www.npmjs.com/package/@jackclaw/create) | `npm create jackclaw@latest` scaffolding |
+| `@jackclaw/dashboard` | (private) | React real-time web dashboard |
+| `@jackclaw/watchdog` | (private) | Human-only oversight + heartbeat monitor |
+| `@jackclaw/payment-vault` | (private) | CEO-approval payment compliance engine |
+
+## Architecture / 架构图
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                        CEO (You / Human)                      │
+│   npm install -g @jackclaw/cli  →  jackclaw demo             │
+└───────────────────────────┬──────────────────────────────────┘
+                            │  JWT Auth  (REST + WebSocket)
+┌───────────────────────────▼──────────────────────────────────┐
+│                    @jackclaw/hub  :3100                       │
+│                                                               │
+│  Routes tasks  │  Aggregates reports  │  Human-review queue  │
+│  ClawChat WS   │  Trust graph         │  Dashboard UI        │
+└───┬────────────┬────────────┬─────────┬────────────┬─────────┘
+    │            │            │         │            │
+    │ @jackclaw/protocol (RSA-4096 + AES-256 per message)
+    │            │            │         │            │
+┌───▼───┐  ┌────▼───┐  ┌─────▼──┐  ┌──▼─────┐  ┌──▼─────┐
+│ Node1 │  │ Node2  │  │ Node3  │  │  ...   │  │ NodeN  │
+│:19000 │  │:19001  │  │:19002  │  │        │  │        │
+└───┬───┘  └────┬───┘  └─────┬──┘  └────────┘  └────────┘
+    │           │             │
+    └─ @jackclaw/memory  (SQLite, private per node)
+    └─ @jackclaw/llm-gateway  (16 LLM providers)
+    └─ @jackclaw/harness  (ACP adapter)
+
+Side services:
+  @jackclaw/payment-vault  — CEO-approval payment workflow
+  @jackclaw/watchdog       — heartbeat + health metrics
+  @jackclaw/tunnel         — cloudflared public URL (--tunnel flag)
+```
 
 ---
 

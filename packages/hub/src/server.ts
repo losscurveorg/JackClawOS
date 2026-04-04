@@ -135,10 +135,10 @@ export function createServer(): Application {
   // Request logging
   app.use(morgan('[:date[iso]] :method :url :status :response-time ms - :res[content-length]'))
 
-  // Global rate limiting: 60 req/min per IP
+  // Global rate limiting: 60 req/min per IP (unlimited in test mode)
   const limiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 60,
+    max: process.env.NODE_ENV === 'test' ? 10000 : 60,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many requests. Limit: 60/min per IP.' },

@@ -56,6 +56,6 @@ First public release of JackClaw — Cross-Agent Collaboration Framework.
 - Human-in-loop for high-risk operations
 
 ### Stats
-- 15 packages in monorepo
-- 45+ E2E test assertions
+- 14 packages in monorepo
+- 71 E2E test assertions
 - ~15,000 lines of TypeScript

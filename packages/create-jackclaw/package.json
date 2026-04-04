@@ -25,5 +25,13 @@
   "license": "MIT",
   "publishConfig": {
     "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DevJackKong/JackClawOS.git"
+  },
+  "homepage": "https://github.com/DevJackKong/JackClawOS#readme",
+  "bugs": {
+    "url": "https://github.com/DevJackKong/JackClawOS/issues"
   }
 }

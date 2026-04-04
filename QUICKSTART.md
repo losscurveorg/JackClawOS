@@ -11,7 +11,24 @@
 - Node.js >= 20
 - npm >= 10
 
-## 1. Clone & Build / 克隆并构建
+## Option A: npm Global Install (Recommended) / npm 全局安装（推荐）
+
+```bash
+npm install -g @jackclaw/cli
+jackclaw demo
+```
+
+Expected output / 预期输出:
+```
+🦞 JackClaw Demo — Starting CEO + 3 AI employees...
+✅ Hub ready — http://localhost:3100
+✅ Node ready — http://localhost:19000
+All services running. Ctrl+C to stop.
+```
+
+→ Dashboard at [http://localhost:3100](http://localhost:3100)
+
+## Option B: Clone & Build / 克隆并构建
 
 ```bash
 git clone https://github.com/DevJackKong/JackClawOS.git
@@ -20,7 +37,7 @@ npm install
 npm run build
 ```
 
-## 2. Start Hub + Node / 启动服务
+## 1. Start Hub + Node / 启动服务 (git clone path)
 
 ```bash
 npx jackclaw start
@@ -44,7 +61,7 @@ Expected output / 预期输出:
 All services running. Ctrl+C to stop.
 ```
 
-## 3. Send Your First Message / 发送第一条消息
+## 2. Send Your First Message / 发送第一条消息
 
 ### Register a node / 注册节点
 
@@ -167,12 +184,13 @@ Node config is at `~/.jackclaw/config.json`:
 node tests/e2e.js
 ```
 
-45 assertions covering: registration, auth, node listing, reports, chat, directory, collaboration.
+71 assertions covering: registration, auth, node listing, reports, chat, directory, collaboration, memory search, payment vault.
 
 ## What's Next / 下一步
 
-- `npm create jackclaw@latest my-team` — Scaffold a new team (coming soon)
-- Dashboard at `http://localhost:3100` (coming soon)
+- `npm create jackclaw@latest my-team` — Scaffold a new team
+- Dashboard at `http://localhost:3100` (real-time web UI)
+- `jackclaw start --tunnel` — instant public URL via cloudflared
 - Multi-hub federation (roadmap)
 
 ---

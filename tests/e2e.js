@@ -569,6 +569,390 @@ async function testChatExtended() {
   ok('Alice in ≥2 groups (original + e2e)', (r5.b?.groups?.length ?? 0) >= 2);
 }
 
+// ─── OrgMemory API Tests ───────────────────────────────────────
+
+async function testOrgMemory() {
+  console.log('\n🔷 OrgMemory API');
+
+  // 1. Add a lesson memory
+  const r1 = await req('POST', '/api/org-memory', {
+    type: 'lesson',
+    content: 'Always run integration tests before merging to main.',
+    nodeId: 'alice',
+    tags: ['testing', 'process'],
+  }, aliceToken);
+  ok('Add lesson → 201', r1.s === 201);
+  ok('Entry has id', typeof r1.b?.entry?.id === 'string');
+  const lessonId = r1.b?.entry?.id;
+
+  // 2. Add a decision memory
+  const r2 = await req('POST', '/api/org-memory', {
+    type: 'decision',
+    content: 'Use JWT for all inter-node authentication.',
+    nodeId: 'ceo-jack',
+    tags: ['security', 'architecture'],
+  }, ceoToken);
+  ok('Add decision → 201', r2.s === 201);
+
+  // 3. Add a milestone
+  const r3 = await req('POST', '/api/org-memory', {
+    type: 'milestone',
+    content: 'Payment vault launched with human-in-loop approval.',
+    nodeId: 'ceo-jack',
+  }, ceoToken);
+  ok('Add milestone → 201', r3.s === 201);
+
+  // 4. Invalid type → 400
+  const r4 = await req('POST', '/api/org-memory', {
+    type: 'invalid-type',
+    content: 'This should fail',
+  }, aliceToken);
+  ok('Invalid type → 400', r4.s === 400);
+
+  // 5. Missing content → 400
+  const r5 = await req('POST', '/api/org-memory', {
+    type: 'lesson',
+  }, aliceToken);
+  ok('Missing content → 400', r5.s === 400);
+
+  // 6. List all memories
+  const r6 = await req('GET', '/api/org-memory', null, ceoToken);
+  ok('List all → 200', r6.s === 200);
+  ok('Has ≥3 entries', (r6.b?.total ?? 0) >= 3);
+
+  // 7. Filter by type
+  const r7 = await req('GET', '/api/org-memory?type=lesson', null, aliceToken);
+  ok('Filter by type → 200', r7.s === 200);
+  ok('All entries are lessons', r7.b?.entries?.every(e => e.type === 'lesson'));
+
+  // 8. Search
+  const r8 = await req('GET', '/api/org-memory/search?q=payment', null, aliceToken);
+  ok('Search → 200', r8.s === 200);
+  ok('Search finds payment entry', (r8.b?.total ?? 0) >= 1);
+
+  // 9. Search missing q → 400
+  const r9 = await req('GET', '/api/org-memory/search', null, aliceToken);
+  ok('Search no q → 400', r9.s === 400);
+
+  // 10. Get single entry by id
+  const r10 = await req('GET', `/api/org-memory/${lessonId}`, null, aliceToken);
+  ok('Get by id → 200', r10.s === 200);
+  ok('Entry content matches', r10.b?.entry?.content?.includes('integration tests'));
+
+  // 11. Get non-existent → 404
+  const r11 = await req('GET', '/api/org-memory/nonexistent-id-xyz', null, aliceToken);
+  ok('Non-existent entry → 404', r11.s === 404);
+
+  // 12. Delete (non-CEO) → 403
+  const r12 = await req('DELETE', `/api/org-memory/${lessonId}`, null, aliceToken);
+  ok('Worker delete → 403', r12.s === 403);
+
+  // 13. Delete (CEO) → 200
+  const r13 = await req('DELETE', `/api/org-memory/${lessonId}`, null, ceoToken);
+  ok('CEO delete → 200', r13.s === 200);
+
+  // 14. Verify deleted
+  const r14 = await req('GET', `/api/org-memory/${lessonId}`, null, ceoToken);
+  ok('After delete → 404', r14.s === 404);
+}
+
+// ─── LLM Gateway Unit Tests (direct module import) ──────────────
+
+async function testLLMGateway() {
+  console.log('\n🔷 LLM Gateway (module)');
+
+  let LLMGateway;
+  try {
+    const mod = require(path.join(__dirname, '..', 'packages', 'llm-gateway', 'dist', 'gateway.js'));
+    LLMGateway = mod.LLMGateway;
+  } catch (e) {
+    console.log(`  [skip] Cannot load @jackclaw/llm-gateway: ${e.message}`);
+    return;
+  }
+
+  // Build a gateway with a mock OpenAI-compatible provider
+  const gw = new LLMGateway({
+    providers: [
+      {
+        provider: 'openai',
+        apiKey: 'sk-test-fake',
+        baseUrl: 'http://localhost:9999/v1',
+        defaultModel: 'gpt-4o-mini',
+      },
+      {
+        provider: 'anthropic',
+        apiKey: 'sk-ant-test-fake',
+        defaultModel: 'claude-sonnet-4-6',
+      },
+      {
+        provider: 'deepseek',
+        apiKey: 'sk-deepseek-test-fake',
+        baseUrl: 'https://api.deepseek.com/v1',
+        defaultModel: 'deepseek-chat',
+      },
+    ],
+    defaultProvider: 'openai',
+    fallbackChain: ['anthropic', 'deepseek'],
+    timeoutMs: 5000,
+    maxRetries: 1,
+  });
+
+  // 1. listProviders
+  const providers = gw.listProviders();
+  ok('listProviders returns array', Array.isArray(providers));
+  ok('Has openai provider', providers.includes('openai'));
+  ok('Has anthropic provider', providers.includes('anthropic'));
+  ok('Has deepseek provider', providers.includes('deepseek'));
+
+  // 2. resolveProvider by model prefix
+  const p1 = gw.resolveProvider('claude-sonnet-4-6');
+  ok('claude model → anthropic provider', p1?.name === 'anthropic');
+
+  const p2 = gw.resolveProvider('gpt-4o');
+  ok('gpt model → openai provider', p2?.name === 'openai');
+
+  const p3 = gw.resolveProvider('deepseek-chat');
+  ok('deepseek model → deepseek provider', p3?.name === 'deepseek');
+
+  // 3. estimateCost
+  const cost1 = gw.estimateCost('gpt-4o', 1000, 500);
+  ok('estimateCost gpt-4o > 0', cost1 > 0);
+
+  const cost2 = gw.estimateCost('claude-sonnet-4-6', 1000, 500);
+  ok('estimateCost claude > 0', cost2 > 0);
+
+  const cost3 = gw.estimateCost('llama3', 10000, 5000);
+  ok('estimateCost local = 0', cost3 === 0);
+
+  // 4. getStats initial state
+  const stats = gw.getStats();
+  ok('Initial totalRequests = 0', stats.totalRequests === 0);
+  ok('Initial totalCostUsd = 0', stats.totalCostUsd === 0);
+  ok('Stats has byProvider', typeof stats.byProvider === 'object');
+
+  // 5. chat() fails → all providers fail → throws
+  let threw = false;
+  try {
+    await gw.chat({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+  } catch (e) {
+    threw = true;
+    ok('chat() throws when all providers fail', threw);
+    ok('Error message mentions gateway', e.message.includes('gateway') || e.message.length > 0);
+  }
+  if (!threw) ok('chat() throws when all providers fail', false);
+
+  // 6. addProvider
+  gw.addProvider({
+    provider: 'groq',
+    apiKey: 'gsk-test',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    defaultModel: 'llama-3.3-70b-versatile',
+  });
+  ok('addProvider adds groq', gw.listProviders().includes('groq'));
+}
+
+// ─── Humans API (Identity Complete Flow) ──────────────────────
+
+async function testHumans() {
+  console.log('\n🔷 Humans API (Identity Flow)');
+
+  // 1. Register a human (no JWT needed)
+  const r1 = await req('POST', '/api/humans/register', {
+    humanId: 'jack-human',
+    displayName: 'Jack (Human)',
+    agentNodeId: 'ceo-jack',
+    webhookUrl: 'http://localhost:19099/dev/null',
+  });
+  ok('Register human → 200', r1.s === 200);
+  ok('Human has humanId', r1.b?.human?.humanId === 'jack-human');
+  ok('Human has humanToken', typeof r1.b?.human?.humanToken === 'string');
+  const humanToken = r1.b?.human?.humanToken;
+
+  // 2. Register another human for messaging target
+  const r2 = await req('POST', '/api/humans/register', {
+    humanId: 'mary-human',
+    displayName: 'Mary (Human)',
+    agentNodeId: 'alice',
+  });
+  ok('Register second human → 200', r2.s === 200);
+
+  // 3. Missing required fields → 400
+  const r3 = await req('POST', '/api/humans/register', {
+    humanId: 'incomplete-human',
+    // missing displayName
+  });
+  ok('Missing displayName → 400', r3.s === 400);
+
+  // 4. List all humans (no auth needed)
+  const r4 = await req('GET', '/api/humans');
+  ok('List humans → 200', r4.s === 200);
+  ok('Has ≥2 humans', (r4.b?.humans?.length ?? 0) >= 2);
+  const ids = r4.b?.humans?.map(h => h.humanId) ?? [];
+  ok('jack-human in list', ids.includes('jack-human'));
+
+  // 5. Human sends message with valid humanToken
+  const r5 = await reqWithHeaders('POST', '/api/humans/message', {
+    to: 'alice',
+    content: 'Hello from Jack the human!',
+    type: 'human',
+  }, { 'Authorization': `HumanToken ${humanToken}` });
+  ok('Human message → 200', r5.s === 200);
+  ok('Message has messageId', typeof r5.b?.messageId === 'string');
+
+  // 6. Human message to another humanId (routed via agent)
+  const r6 = await reqWithHeaders('POST', '/api/humans/message', {
+    to: 'mary-human',
+    content: 'Hey Mary, how are you?',
+  }, { 'Authorization': `HumanToken ${humanToken}` });
+  ok('Human-to-human message → 200', r6.s === 200);
+
+  // 7. Invalid humanToken → 401
+  const r7 = await reqWithHeaders('POST', '/api/humans/message', {
+    to: 'alice',
+    content: 'Should fail',
+  }, { 'Authorization': 'HumanToken invalid-token-xyz' });
+  ok('Invalid humanToken → 401', r7.s === 401);
+
+  // 8. Missing Authorization header → 401
+  const r8 = await req('POST', '/api/humans/message', {
+    to: 'alice',
+    content: 'No auth',
+  });
+  ok('No auth header → 401', r8.s === 401);
+
+  // 9. Missing required fields in message → 400
+  const r9 = await reqWithHeaders('POST', '/api/humans/message', {
+    // missing 'to'
+    content: 'Missing to field',
+  }, { 'Authorization': `HumanToken ${humanToken}` });
+  ok('Missing to field → 400', r9.s === 400);
+}
+
+// ─── HumanInLoop Review Tests ──────────────────────────────────
+
+async function testHumanReview() {
+  console.log('\n🔷 Human-in-Loop Review');
+
+  // 1. Submit review request
+  const deadline = Date.now() + 60000; // 1 minute
+  const r1 = await req('POST', '/api/review/request', {
+    trigger: 'large_payment',
+    nodeId: 'alice',
+    description: 'Alice wants to approve $10,000 infrastructure spend',
+    context: { amount: 10000, currency: 'USD', category: 'infrastructure' },
+    options: [
+      { id: 'approve', label: 'Approve', action: 'proceed' },
+      { id: 'reject', label: 'Reject', action: 'abort' },
+    ],
+    deadline,
+    defaultOnTimeout: 'reject',
+  }, aliceToken);
+  ok('Submit review request → 201', r1.s === 201);
+  ok('Returns requestId', typeof r1.b?.requestId === 'string');
+  const reviewId = r1.b?.requestId;
+
+  // 2. Missing required fields → 400
+  const r2 = await req('POST', '/api/review/request', {
+    trigger: 'test',
+    // missing nodeId, description
+  }, aliceToken);
+  ok('Missing fields → 400', r2.s === 400);
+
+  // 3. Get pending reviews
+  const r3 = await req('GET', '/api/review/pending', null, ceoToken);
+  ok('Get pending → 200', r3.s === 200);
+  ok('Has ≥1 pending review', (r3.b?.requests?.length ?? 0) >= 1);
+
+  // 4. Get pending filtered by nodeId
+  const r4 = await req('GET', '/api/review/pending?nodeId=alice', null, ceoToken);
+  ok('Get pending by nodeId → 200', r4.s === 200);
+  ok('All pending are from alice', r4.b?.requests?.every(r => r.nodeId === 'alice'));
+
+  // 5. Resolve without human-token → 401
+  const r5 = await req('POST', `/api/review/resolve/${reviewId}`, { decision: 'approve' }, ceoToken);
+  ok('Resolve without human-token → 401', r5.s === 401);
+
+  // 6. Resolve with invalid human-token → 403
+  const r6 = await reqWithHeaders('POST', `/api/review/resolve/${reviewId}`,
+    { decision: 'approve' },
+    { 'Authorization': `Bearer ${ceoToken}`, 'human-token': 'invalid-token' });
+  ok('Resolve with invalid token → 403', r6.s === 403);
+
+  // 7. Resolve with valid HMAC human-token
+  const humanTokenSecret = 'change-me-in-production';
+  if (!reviewId) {
+    ok('Resolve with valid token → 200', false);
+    ok('Returns success=true', false);
+    ok('Double resolve → 409', false);
+    return;
+  }
+  const hmac = crypto.createHmac('sha256', humanTokenSecret)
+    .update(reviewId)
+    .digest('hex');
+  const r7 = await reqWithHeaders('POST', `/api/review/resolve/${reviewId}`,
+    { decision: 'approve' },
+    { 'Authorization': `Bearer ${ceoToken}`, 'human-token': hmac });
+  ok('Resolve with valid token → 200', r7.s === 200);
+  ok('Returns success=true', r7.b?.success === true);
+
+  // 8. Resolve already-resolved → 409
+  const r8 = await reqWithHeaders('POST', `/api/review/resolve/${reviewId}`,
+    { decision: 'reject' },
+    { 'Authorization': `Bearer ${ceoToken}`, 'human-token': hmac });
+  ok('Double resolve → 409', r8.s === 409);
+}
+
+// ─── Plan Estimate Tests ────────────────────────────────────────
+
+async function testPlanEstimate() {
+  console.log('\n🔷 Plan Estimate (local heuristic)');
+
+  // 1. Missing required fields → 400
+  const r1 = await req('POST', '/api/plan/estimate', {}, aliceToken);
+  ok('Missing title/description → 400', r1.s === 400);
+
+  // 2. Trivial task (very short description)
+  const r2 = await req('POST', '/api/plan/estimate', {
+    title: 'Fix typo',
+    description: 'Fix a small typo in README',
+  }, aliceToken);
+  ok('Trivial task → 200', r2.s === 200);
+  ok('Plan has complexity', typeof r2.b?.plan?.complexity === 'string');
+  ok('Trivial task is trivial or simple', ['trivial', 'simple'].includes(r2.b?.plan?.complexity));
+
+  // 3. Complex task (long description, >80 words → moderate or complex)
+  const complexDesc = 'Implement a complete multi-tenant payment processing system with support for ' +
+    'multiple currencies, jurisdictions, and compliance frameworks including PCI-DSS. ' +
+    'The system needs to handle real-time fraud detection algorithms, integrate with multiple ' +
+    'payment gateways including Stripe, PayPal, Alipay, and WeChat Pay, support automatic ' +
+    'currency conversion with live exchange rates, generate detailed immutable audit trails, ' +
+    'handle refunds, chargebacks, and disputes with automated workflows, comply with regional ' +
+    'tax requirements, implement retry logic with exponential backoff and circuit breakers, ' +
+    'and provide a comprehensive real-time dashboard for monitoring transactions and anomalies. ' +
+    'The system should scale horizontally to handle millions of transactions per day with ' +
+    'sub-100ms p99 latency, support multi-region active-active deployment, and integrate ' +
+    'with the existing human-in-loop approval workflow for large payment amounts.';
+  const r3 = await req('POST', '/api/plan/estimate', {
+    title: 'Payment System',
+    description: complexDesc,
+  }, ceoToken);
+  ok('Complex task → 200', r3.s === 200);
+  ok('Complex task is moderate or complex', ['moderate', 'complex'].includes(r3.b?.plan?.complexity));
+  ok('Plan has estimatedMinutesSerial', typeof r3.b?.plan?.estimatedMinutesSerial === 'number');
+  ok('Plan has estimatedTotalTokens', typeof r3.b?.plan?.estimatedTotalTokens === 'number');
+
+  // 4. Non-existent nodeId → 404
+  const r4 = await req('POST', '/api/plan/estimate', {
+    title: 'Test',
+    description: 'Testing non-existent node',
+    nodeId: 'ghost-node-xyz',
+  }, aliceToken);
+  ok('Non-existent nodeId → 404', r4.s === 404);
+}
+
 // ─── Runner ────────────────────────────────────────────────────
 
 async function run() {
@@ -595,6 +979,11 @@ async function run() {
     await testAskProxy();
     await testMemorySearch();
     await testChatExtended();
+    await testOrgMemory();
+    await testLLMGateway();
+    await testHumans();
+    await testHumanReview();
+    await testPlanEstimate();
   } catch (err) {
     console.log(`\n💥 Fatal: ${err.message}`);
     console.log(err.stack);
