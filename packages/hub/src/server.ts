@@ -2,12 +2,12 @@
 // Central node for CEO: receives and aggregates agent reports
 
 import express, { Application, Request, Response, NextFunction, RequestHandler } from 'express'
-import rateLimit from 'express-rate-limit'
 import morgan from 'morgan'
 import jwt from 'jsonwebtoken'
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
+import { rateLimiter, corsConfig, cspHeaders, inputSanitizer, keyRotation } from './security'
 
 import registerRoute from './routes/register'
 import reportRoute from './routes/report'
@@ -32,7 +32,6 @@ import filesRoute from './routes/files'
 import groupsRoute from './routes/groups'
 import federationRoute from './routes/federation'
 import receiptRoute from './routes/receipt'
-import pushRoute from './routes/push'
 import { initFederationManager } from './federation'
 import { JWTPayload } from './types'
 
@@ -113,6 +112,10 @@ declare global {
   }
 }
 
+/**
+ * Verify JWT against all active secrets (current + previous keys in rotation window).
+ * Falls back to the legacy JWT_SECRET for tokens issued before key rotation was added.
+ */
 function jwtAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization
   if (!authHeader?.startsWith('Bearer ')) {
@@ -121,13 +124,18 @@ function jwtAuthMiddleware(req: Request, res: Response, next: NextFunction): voi
   }
 
   const token = authHeader.slice(7)
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as JWTPayload
-    req.jwtPayload = payload
-    next()
-  } catch (err) {
-    res.status(401).json({ error: 'Invalid or expired token' })
+  // Try all active rotating keys, then fall back to the legacy static secret
+  const secrets = [...keyRotation.getActiveSecrets(), JWT_SECRET]
+
+  for (const secret of secrets) {
+    try {
+      const payload = jwt.verify(token, secret) as JWTPayload
+      req.jwtPayload = payload
+      next()
+      return
+    } catch { /* try next secret */ }
   }
+  res.status(401).json({ error: 'Invalid or expired token' })
 }
 
 // ─── Server Factory ───────────────────────────────────────────────────────────
@@ -138,23 +146,28 @@ export function createServer(): Application {
   const hubUrl = process.env.HUB_URL ?? `http://localhost:${process.env.HUB_PORT ?? 3100}`
   initFederationManager(hubUrl, publicKey, privateKey)
 
+  // Start JWT key auto-rotation (checks every hour, rotates after 30 days)
+  keyRotation.startAutoRotation()
+
   const app = express()
 
-  // Body parsing
+  // CORS — must be first so preflight OPTIONS requests are handled before other middleware
+  app.use(corsConfig())
+
+  // Content Security Policy + hardening headers
+  app.use(cspHeaders())
+
+  // Body parsing (1MB limit for JSON; file routes handle their own body)
   app.use(express.json({ limit: '1mb' }))
+
+  // Input sanitization (strip null bytes; enforce size limit pre-parse)
+  app.use('/api/', inputSanitizer())
 
   // Request logging
   app.use(morgan('[:date[iso]] :method :url :status :response-time ms - :res[content-length]'))
 
-  // Global rate limiting: 60 req/min per IP (unlimited in test mode)
-  const limiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: process.env.NODE_ENV === 'test' ? 10000 : 60,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Too many requests. Limit: 60/min per IP.' },
-  })
-  app.use('/api/', limiter)
+  // Global rate limiting: 1000 req/min per IP+nodeId
+  app.use('/api/', rateLimiter.global)
 
   // Dashboard — serve static files from public/
   const publicDir = path.join(__dirname, '..', 'public')
@@ -170,7 +183,8 @@ export function createServer(): Application {
   // Public: node registration (no JWT required — nodes need a token first)
   app.use('/api/register', registerRoute)
 
-  // Public: user auth (register/login — no JWT required)
+  // Public: user auth — strict rate limit on login to prevent brute-force
+  app.post('/api/auth/login', rateLimiter.login)
   app.use('/api/auth', authRoute)
 
   // Public: ClawChat (nodes authenticate via WebSocket nodeId)
@@ -184,9 +198,6 @@ export function createServer(): Application {
 
   // Public: inter-hub federation protocol (hub-to-hub, no JWT)
   app.use('/api/federation', federationRoute)
-
-  // Public: Web Push subscription and VAPID key (browser service workers call this)
-  app.use('/api/push', pushRoute)
 
   // Protected: all other routes require JWT
   app.use('/api/', jwtAuthMiddleware)
@@ -206,8 +217,8 @@ export function createServer(): Application {
   app.use('/api/ask', askRoute)
   app.use('/api/social', socialRoute)
   app.use('/api/groups', groupsRoute)
-  // Files: raw body handled in-route; must NOT use express.json() for these
-  app.use('/api/files', filesRoute)
+  // Files: raw body handled in-route; rate-limited separately
+  app.use('/api/files', rateLimiter.upload, filesRoute)
 
   // 404 handler
   app.use((_req: Request, res: Response) => {
