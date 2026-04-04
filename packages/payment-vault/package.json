@@ -18,8 +18,10 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "files": ["dist"],
-  "license": "UNLICENSED",
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
   "private": true,
   "keywords": [
     "jackclaw",
