@@ -1,14 +1,15 @@
 /**
  * JackClaw Hub - Agent Directory Routes
  *
- * /api/directory/register   - Register a @handle
+ * /api/directory/register      - Register a @handle
  * /api/directory/lookup/:handle - Look up an agent by @handle
- * /api/directory/list       - List all public agents on this Hub
+ * /api/directory/list          - List all public agents on this Hub
  *
- * /api/collab/invite        - Send a collaboration invitation
- * /api/collab/respond       - Accept/decline/conditional response
- * /api/collab/update        - Pause/end a collaboration session
- * /api/collab/sessions      - List active sessions for a node
+ * /api/collab/invite           - Send a collaboration invitation
+ * /api/collab/respond          - Accept/decline/conditional response
+ * /api/collab/sessions/:id     - Pause/end/resume a collaboration session
+ * /api/collab/sessions         - List active sessions for a node
+ * /api/collab/trust/:from/:to  - Query trust relation
  */
 
 import { Router, Request, Response } from 'express'
@@ -24,17 +25,16 @@ import {
   TrustRelation,
   TrustLevel,
   parseHandle,
-  formatHandle,
 } from '@jackclaw/protocol'
+import { directoryStore } from '../store/directory'
 
 const router = Router()
 
-// ─── Storage ──────────────────────────────────────────────────────────────────
+// ─── Storage (collaborations + trust remain file-backed here) ─────────────────
 
-const HUB_DIR = path.join(process.env.HOME || '~', '.jackclaw', 'hub')
-const DIRECTORY_FILE = path.join(HUB_DIR, 'directory.json')
-const COLLABS_FILE = path.join(HUB_DIR, 'collaborations.json')
-const TRUST_FILE = path.join(HUB_DIR, 'trust.json')
+const HUB_DIR       = path.join(process.env.HOME || '~', '.jackclaw', 'hub')
+const COLLABS_FILE  = path.join(HUB_DIR, 'collaborations.json')
+const TRUST_FILE    = path.join(HUB_DIR, 'trust.json')
 
 function loadJSON<T>(file: string, defaultVal: T): T {
   try {
@@ -48,16 +48,12 @@ function saveJSON(file: string, data: unknown): void {
   fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf-8')
 }
 
-// In-memory caches
-let directory: Record<string, AgentProfile> = loadJSON(DIRECTORY_FILE, {})
 let collaborations: Record<string, CollaborationSession> = loadJSON(COLLABS_FILE, {})
-let trustGraph: Record<string, TrustRelation> = loadJSON(TRUST_FILE, {})
+let trustGraph:     Record<string, TrustRelation>        = loadJSON(TRUST_FILE, {})
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function trustKey(from: string, to: string): string {
-  return `${from}→${to}`
-}
+function trustKey(from: string, to: string): string { return `${from}→${to}` }
 
 function getTrust(from: string, to: string): TrustRelation | null {
   return trustGraph[trustKey(from, to)] ?? null
@@ -88,26 +84,27 @@ router.post('/register', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'invalid_handle', message: 'Handle must be alphanumeric, e.g. @alice or @alice.myorg' })
   }
 
-  // Check uniqueness
-  if (directory[parsed.full] && directory[parsed.full].nodeId !== body.nodeId) {
+  // Uniqueness check: block if a different node already owns this handle
+  const existing = directoryStore.getProfile(parsed.full)
+  if (existing && existing.nodeId !== body.nodeId) {
     return res.status(409).json({ error: 'handle_taken', handle: parsed.full })
   }
 
   const profile: AgentProfile = {
-    nodeId: body.nodeId,
-    handle: parsed.full,
-    displayName: body.displayName ?? parsed.local,
-    role: body.role ?? 'member',
-    publicKey: body.publicKey,
-    hubUrl: (req as any).hubUrl ?? `http://localhost:${process.env.HUB_PORT ?? 3100}`,
+    nodeId:       body.nodeId,
+    handle:       parsed.full,
+    displayName:  body.displayName ?? parsed.local,
+    role:         body.role ?? 'member',
+    publicKey:    body.publicKey,
+    hubUrl:       (req as any).hubUrl ?? `http://localhost:${process.env.HUB_PORT ?? 3100}`,
     capabilities: body.capabilities ?? [],
-    visibility: body.visibility ?? 'contacts',
-    createdAt: Date.now(),
-    lastSeen: Date.now(),
+    visibility:   body.visibility ?? 'contacts',
+    createdAt:    existing?.createdAt ?? Date.now(),
+    lastSeen:     Date.now(),
   }
 
-  directory[parsed.full] = profile
-  saveJSON(DIRECTORY_FILE, directory)
+  // Register via store — single source of truth for handle→nodeId mapping
+  directoryStore.registerHandle(parsed.full, profile)
 
   console.log(`[directory] Registered: ${parsed.full} (nodeId: ${body.nodeId})`)
   return res.status(201).json({ handle: parsed.full, profile })
@@ -115,20 +112,17 @@ router.post('/register', (req: Request, res: Response) => {
 
 // GET /api/directory/lookup/:handle
 router.get('/lookup/:handle', (req: Request, res: Response) => {
-  const raw = decodeURIComponent(req.params.handle)
+  const raw    = decodeURIComponent(req.params.handle)
   const parsed = parseHandle(raw)
   if (!parsed) return res.status(400).json({ error: 'invalid_handle' })
 
-  const profile = directory[parsed.full]
+  const profile = directoryStore.getProfile(parsed.full)
   if (!profile) {
     return res.json({ found: false, handle: parsed.full, isLocal: true })
   }
 
-  // Update lastSeen
-  directory[parsed.full].lastSeen = Date.now()
-  saveJSON(DIRECTORY_FILE, directory)
+  directoryStore.touchHandle(parsed.full)
 
-  // Don't expose private agents to unauthenticated callers
   if (profile.visibility === 'private') {
     return res.json({ found: false, handle: parsed.full, isLocal: true })
   }
@@ -137,8 +131,8 @@ router.get('/lookup/:handle', (req: Request, res: Response) => {
 })
 
 // GET /api/directory/list
-router.get('/list', (req: Request, res: Response) => {
-  const visible = Object.values(directory).filter(p => p.visibility === 'public')
+router.get('/list', (_req: Request, res: Response) => {
+  const visible = directoryStore.listPublic()
   return res.json({ agents: visible, count: visible.length })
 })
 
@@ -152,39 +146,36 @@ router.post('/collab/invite', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'missing_fields', required: ['fromHandle', 'toHandle', 'topic'] })
   }
 
-  // Validate handles
   const fromParsed = parseHandle(body.fromHandle)
-  const targets = body.toHandle.split(',').map(h => h.trim())
+  const targets    = body.toHandle.split(',').map(h => h.trim())
   if (!fromParsed) return res.status(400).json({ error: 'invalid_from_handle' })
 
-  // Check all targets exist
   const missing = targets.filter(t => {
     const p = parseHandle(t)
-    return !p || !directory[p.full]
+    return !p || !directoryStore.getProfile(p.full)
   })
   if (missing.length > 0) {
     return res.status(404).json({ error: 'agent_not_found', missing })
   }
 
-  const inviteId = crypto.randomUUID()
+  const inviteId  = crypto.randomUUID()
   const sessionId = crypto.randomUUID()
 
   const invite: CollaborationInvite = {
     inviteId,
-    fromHandle: fromParsed.full,
-    toHandle: targets.map(t => parseHandle(t)!.full).join(', '),
+    fromHandle:       fromParsed.full,
+    toHandle:         targets.map(t => parseHandle(t)!.full).join(', '),
     sessionId,
-    topic: body.topic,
-    context: body.context,
-    capabilities: body.capabilities,
-    autoAccept: body.autoAccept ?? false,
-    memoryScope: body.memoryScope ?? 'isolated',
+    topic:            body.topic,
+    context:          body.context,
+    capabilities:     body.capabilities,
+    autoAccept:       body.autoAccept ?? false,
+    memoryScope:      body.memoryScope ?? 'isolated',
     memoryClearOnEnd: body.memoryClearOnEnd ?? false,
-    expiresAt: body.expiresAt,
-    createdAt: Date.now(),
+    expiresAt:        body.expiresAt,
+    createdAt:        Date.now(),
   }
 
-  // Check if any target should auto-accept
   const autoAccepted = targets.filter(t => {
     const tp = parseHandle(t)!.full
     return shouldAutoAccept(fromParsed.full, tp) || body.autoAccept
@@ -195,13 +186,13 @@ router.post('/collab/invite', (req: Request, res: Response) => {
   const session: CollaborationSession = {
     sessionId,
     inviteId,
-    participants: [fromParsed.full, ...targets.map(t => parseHandle(t)!.full)],
-    initiatorHandle: fromParsed.full,
-    topic: body.topic,
+    participants:     [fromParsed.full, ...targets.map(t => parseHandle(t)!.full)],
+    initiatorHandle:  fromParsed.full,
+    topic:            body.topic,
     status,
-    memoryScope: invite.memoryScope,
+    memoryScope:      invite.memoryScope,
     memoryClearOnEnd: invite.memoryClearOnEnd,
-    startedAt: status === 'accepted' ? Date.now() : undefined,
+    startedAt:        status === 'accepted' ? Date.now() : undefined,
   }
 
   collaborations[sessionId] = session
@@ -226,90 +217,83 @@ router.post('/collab/respond', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'missing_fields' })
   }
 
-  // Find session by inviteId
   const session = Object.values(collaborations).find(s => s.inviteId === body.inviteId)
   if (!session) return res.status(404).json({ error: 'invite_not_found' })
 
   const fromParsed = parseHandle(body.fromHandle)
   if (!fromParsed) return res.status(400).json({ error: 'invalid_handle' })
 
-  // Update session status
   if (body.decision === 'accept') {
-    session.status = 'accepted'
+    session.status    = 'accepted'
     session.startedAt = Date.now()
   } else if (body.decision === 'decline') {
-    session.status = 'declined'
+    session.status  = 'declined'
     session.endedAt = Date.now()
   } else if (body.decision === 'conditional') {
-    session.status = 'conditional'
+    session.status     = 'conditional'
     session.conditions = body.conditions
-    session.startedAt = Date.now()
+    session.startedAt  = Date.now()
   }
 
   collaborations[session.sessionId] = session
   saveJSON(COLLABS_FILE, collaborations)
 
-  // Update trust relation
-  const existing = getTrust(session.initiatorHandle, fromParsed.full)
+  const existing  = getTrust(session.initiatorHandle, fromParsed.full)
   const newLevel: TrustLevel = body.decision === 'decline' ? 'contact'
-    : existing?.collaborationCount ?? 0 >= 3 ? 'colleague'
+    : (existing?.collaborationCount ?? 0) >= 3 ? 'colleague'
     : 'contact'
 
   setTrust({
-    fromHandle: session.initiatorHandle,
-    toHandle: fromParsed.full,
-    level: newLevel,
+    fromHandle:         session.initiatorHandle,
+    toHandle:           fromParsed.full,
+    level:              newLevel,
     collaborationCount: (existing?.collaborationCount ?? 0) + (body.decision !== 'decline' ? 1 : 0),
-    successRate: existing?.successRate ?? 1.0,
-    reputationScore: existing?.reputationScore ?? 70,
-    establishedAt: existing?.establishedAt ?? Date.now(),
-    lastInteractedAt: Date.now(),
+    successRate:        existing?.successRate ?? 1.0,
+    reputationScore:    existing?.reputationScore ?? 70,
+    establishedAt:      existing?.establishedAt ?? Date.now(),
+    lastInteractedAt:   Date.now(),
   })
 
   console.log(`[collab] Response: ${fromParsed.full} ${body.decision} invite ${body.inviteId}`)
-
   return res.json({ sessionId: session.sessionId, status: session.status, session })
 })
 
 // PATCH /api/collab/sessions/:sessionId
 router.patch('/collab/sessions/:sessionId', (req: Request, res: Response) => {
-  const { sessionId } = req.params
-  const { action, outcome } = req.body as { action: 'pause' | 'end' | 'resume', outcome?: string }
+  const { sessionId }  = req.params
+  const { action, outcome } = req.body as { action: 'pause' | 'end' | 'resume'; outcome?: string }
 
   const session = collaborations[sessionId]
   if (!session) return res.status(404).json({ error: 'session_not_found' })
 
   if (action === 'pause') {
-    session.status = 'paused'
+    session.status   = 'paused'
     session.pausedAt = Date.now()
   } else if (action === 'resume') {
-    session.status = 'accepted'
+    session.status   = 'accepted'
     session.pausedAt = undefined
   } else if (action === 'end') {
-    session.status = 'ended'
+    session.status  = 'ended'
     session.endedAt = Date.now()
     session.outcome = outcome
 
-    // If teaching memory, flag for cleanup
     if (session.memoryClearOnEnd && session.memoryScope === 'teaching') {
       console.log(`[collab] Teaching session ${sessionId} ended — memory clear scheduled`)
-      // Memory module will pick this up via event
     }
 
-    // Update trust scores for all participants
     session.participants.forEach(p1 => {
       session.participants.filter(p2 => p2 !== p1).forEach(p2 => {
-        const existing = getTrust(p1, p2)
-        const successDelta = outcome ? 0.05 : 0  // slight boost if outcome recorded
+        const existing    = getTrust(p1, p2)
+        const successDelta = outcome ? 0.05 : 0
         setTrust({
-          fromHandle: p1,
-          toHandle: p2,
-          level: existing?.level ?? 'contact',
+          fromHandle:         p1,
+          toHandle:           p2,
+          level:              existing?.level ?? 'contact',
           collaborationCount: (existing?.collaborationCount ?? 0) + 1,
-          successRate: Math.min(1.0, (existing?.successRate ?? 0.8) + successDelta),
-          reputationScore: Math.min(100, (existing?.reputationScore ?? 70) + (outcome ? 2 : 0)),
-          establishedAt: existing?.establishedAt ?? Date.now(),
-          lastInteractedAt: Date.now(),
+          successRate:        Math.min(1.0, (existing?.successRate ?? 0.8) + successDelta),
+          reputationScore:    Math.min(100, (existing?.reputationScore ?? 70) + (outcome ? 2 : 0)),
+          establishedAt:      existing?.establishedAt ?? Date.now(),
+          lastInteractedAt:   Date.now(),
         })
       })
     })
@@ -323,17 +307,14 @@ router.patch('/collab/sessions/:sessionId', (req: Request, res: Response) => {
 
 // GET /api/collab/sessions
 router.get('/collab/sessions', (req: Request, res: Response) => {
-  const { handle, status } = req.query as { handle?: string, status?: string }
+  const { handle, status } = req.query as { handle?: string; status?: string }
 
   let sessions = Object.values(collaborations)
 
   if (handle) {
     const parsed = parseHandle(handle)
-    if (parsed) {
-      sessions = sessions.filter(s => s.participants.includes(parsed.full))
-    }
+    if (parsed) sessions = sessions.filter(s => s.participants.includes(parsed.full))
   }
-
   if (status) {
     sessions = sessions.filter(s => s.status === status)
   }
@@ -344,7 +325,7 @@ router.get('/collab/sessions', (req: Request, res: Response) => {
 // GET /api/collab/trust/:fromHandle/:toHandle
 router.get('/collab/trust/:fromHandle/:toHandle', (req: Request, res: Response) => {
   const from = parseHandle(decodeURIComponent(req.params.fromHandle))
-  const to = parseHandle(decodeURIComponent(req.params.toHandle))
+  const to   = parseHandle(decodeURIComponent(req.params.toHandle))
 
   if (!from || !to) return res.status(400).json({ error: 'invalid_handle' })
 

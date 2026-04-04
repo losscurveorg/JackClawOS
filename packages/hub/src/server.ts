@@ -35,6 +35,10 @@ import receiptRoute from './routes/receipt'
 import profilePageRoute from './routes/profile-page'
 import moltbookRoute from './routes/moltbook'
 import tasksRoute from './routes/tasks'
+import channelsRoute from './routes/channels'
+import pushRoute from './routes/push'
+import searchRoute from './routes/search'
+import presenceRoute from './routes/presence'
 import { initFederationManager } from './federation'
 import { JWTPayload } from './types'
 
@@ -207,26 +211,29 @@ export function createServer(): Application {
 
   // Protected: all other routes require JWT
   app.use('/api/', jwtAuthMiddleware)
-  app.use('/api/report', reportRoute)
-  app.use('/api/nodes', nodesRoute)
-  app.use('/api/summary', summaryRoute)
-  app.use('/api/memory', memoryRoute)
-  app.use('/api/directory', directoryRoute)
-  app.use('/api', directoryRoute)
-  app.use('/api/watchdog', watchdogRoute)
-  app.use('/api/review', humanReviewRoute)
-  app.use('/api/payment', paymentRoute)
-  app.use('/api/plan', planRoute)
-  app.use('/api/teach', teachRoute)
-  app.use('/api/org-norm', orgNormRoute)
-  app.use('/api/org-memory', orgMemoryRoute)
-  app.use('/api/ask', askRoute)
-  app.use('/api/social', socialRoute)
-  app.use('/api/groups', groupsRoute)
+  app.use('/api/reports', reportRoute)        // POST / — submit node daily report
+  app.use('/api/nodes', nodesRoute)           // GET / — list registered nodes; POST /:nodeId/workload
+  app.use('/api/summary', summaryRoute)       // GET / — daily digest summary
+  app.use('/api/memory', memoryRoute)         // org memory, collab sessions, push/pull
+  app.use('/api/directory', directoryRoute)   // GET /lookup/:handle, POST /register, /collab/*
+  app.use('/api/watchdog', watchdogRoute)     // heartbeat, status, policy, alerts
+  app.use('/api/review', humanReviewRoute)    // human-in-the-loop review requests
+  app.use('/api/payment', paymentRoute)       // payment requests, approvals, audit
+  app.use('/api/plan', planRoute)             // POST /estimate — task estimation
+  app.use('/api/teach', teachRoute)           // knowledge sharing sessions
+  app.use('/api/org-norm', orgNormRoute)      // organisation norms CRUD
+  app.use('/api/org-memory', orgMemoryRoute)  // organisation memory CRUD + search
+  app.use('/api/ask', askRoute)               // GET /providers; POST / — LLM proxy
+  app.use('/api/social', socialRoute)         // social graph: contacts, messages, profiles
+  app.use('/api/groups', groupsRoute)         // group chat management
+  app.use('/api/channels', channelsRoute)     // GET / — aggregate node channel status; POST /configure
+  app.use('/api/push', pushRoute)             // web push: subscribe, unsubscribe, test
+  app.use('/api/search', searchRoute)         // GET /messages, GET /contacts — full-text search
   // Files: raw body handled in-route; rate-limited separately
   app.use('/api/files', rateLimiter.upload, filesRoute)
-  app.use('/api/moltbook', moltbookRoute)
-  app.use('/api/tasks', tasksRoute)
+  app.use('/api/moltbook', moltbookRoute)     // Moltbook social integration
+  app.use('/api/tasks', tasksRoute)           // async task queue: submit, status, cancel
+  app.use('/api/presence', presenceRoute)     // GET /:handle, GET /online — presence queries
 
   // 404 handler
   app.use((_req: Request, res: Response) => {

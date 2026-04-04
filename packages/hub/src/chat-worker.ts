@@ -18,6 +18,9 @@ import type { IncomingMessage } from 'http'
 import { ChatStore, ChatMessage } from './store/chat'
 import { isHumanTarget, getHuman, pushToHuman } from './store/human-registry'
 import { pushService } from './push-service'
+import { presenceManager } from './presence'
+import { directoryStore } from './store/directory'
+import { offlineQueue } from './store/offline-queue'
 
 // ─── Priority ─────────────────────────────────────────────────────────────────
 
@@ -201,13 +204,25 @@ export class ChatWorker {
 
       this.wsClients.set(nodeId, ws)
       this.wsAlive.set(nodeId, true)
+      presenceManager.setOnline(nodeId, ['ws'])
       console.log(`[chat-worker] ${nodeId} connected (total: ${this.wsClients.size})`)
 
-      ws.on('pong', () => { this.wsAlive.set(nodeId, true) })
+      ws.on('pong', () => {
+        this.wsAlive.set(nodeId, true)
+        presenceManager.heartbeat(nodeId)
+      })
 
-      // Drain offline inbox on connect
+      // Drain chat offline inbox
       for (const offlineMsg of this.store.drainInbox(nodeId)) {
         ws.send(JSON.stringify({ event: 'message', data: offlineMsg }))
+      }
+
+      // Drain unified offline queue for all @handles associated with this node
+      const handles = directoryStore.getHandlesForNode(nodeId)
+      for (const handle of handles) {
+        for (const envelope of offlineQueue.dequeue(handle)) {
+          ws.send(JSON.stringify(envelope))
+        }
       }
 
       ws.on('message', (raw) => {
@@ -242,6 +257,7 @@ export class ChatWorker {
       ws.on('close', () => {
         this.wsClients.delete(nodeId)
         this.wsAlive.delete(nodeId)
+        presenceManager.setOffline(nodeId)
         console.log(`[chat-worker] ${nodeId} disconnected (total: ${this.wsClients.size})`)
       })
     })
@@ -353,6 +369,7 @@ export class ChatWorker {
           ws.terminate()
           this.wsClients.delete(nodeId)
           this.wsAlive.delete(nodeId)
+          presenceManager.setOffline(nodeId)
           continue
         }
         this.wsAlive.set(nodeId, false)
