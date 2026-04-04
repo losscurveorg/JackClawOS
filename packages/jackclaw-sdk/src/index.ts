@@ -263,12 +263,22 @@ export function createMockScheduleContext(
 // Mirror of hub/src/store/chat.ts — for plugin and SDK consumers
 
 export type ChatMessageType =
-  | 'human'
-  | 'task'
-  | 'ask'
-  | 'broadcast'
-  | 'reply'
-  | 'ack'
+  | 'text'          // plain text message
+  | 'human'         // human → agent
+  | 'task'          // task dispatch
+  | 'ask'           // question / LLM query
+  | 'broadcast'     // broadcast to multiple targets
+  | 'reply'         // reply to a specific message
+  | 'ack'           // delivery acknowledgement
+  | 'plan-result'   // task plan result
+  | 'card'          // structured card (approval, form, etc.)
+  | 'transaction'   // payment / transfer
+  | 'media'         // image / audio / video / file
+  | 'reminder'      // scheduled reminder
+  | 'calendar'      // calendar event
+  | 'approval'      // approval request / response
+  | 'system'        // system notification
+  | `x-${string}`   // custom extension types
 
 export interface ChatMessage {
   id: string
