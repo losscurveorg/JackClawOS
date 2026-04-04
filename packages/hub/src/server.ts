@@ -185,6 +185,9 @@ export function createServer(): Application {
   // Public: inter-hub federation protocol (hub-to-hub, no JWT)
   app.use('/api/federation', federationRoute)
 
+  // Public: Web Push subscription and VAPID key (browser service workers call this)
+  app.use('/api/push', pushRoute)
+
   // Protected: all other routes require JWT
   app.use('/api/', jwtAuthMiddleware)
   app.use('/api/report', reportRoute)

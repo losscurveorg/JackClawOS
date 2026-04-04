@@ -66,6 +66,10 @@ export class ChatStore {
   // nodeId → 活跃时间统计（轻量观察，不做深度分析）
   private activityLog: Map<string, number[]> = new Map()
 
+  getMessage(id: string): ChatMessage | undefined {
+    return this.messages.get(id)
+  }
+
   saveMessage(msg: ChatMessage): void {
     this.messages.set(msg.id, msg)
     if (msg.threadId) {
