@@ -16,6 +16,8 @@ import { registerLogs } from './commands/logs.js';
 import { registerStop } from './commands/stop';
 import { registerSocial } from './commands/social';
 import { registerFilter } from './commands/filter';
+import { registerSecretary } from './commands/secretary';
+import { registerTranslate } from './commands/translate';
 
 const program = new Command();
 
@@ -42,5 +44,7 @@ registerLogs(program);
 registerStop(program);
 registerSocial(program);
 registerFilter(program);
+registerSecretary(program);
+registerTranslate(program);
 
 program.parse(process.argv);
