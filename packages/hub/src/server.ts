@@ -26,6 +26,8 @@ import orgNormRoute from './routes/org-norm'
 import orgMemoryRoute from './routes/org-memory'
 import askRoute from './routes/ask'
 import socialRoute from './routes/social'
+import authRoute from './routes/auth'
+import groupsRoute from './routes/groups'
 import { JWTPayload } from './types'
 
 // ─── Hub Configuration ────────────────────────────────────────────────────────
@@ -160,6 +162,9 @@ export function createServer(): Application {
   // Public: node registration (no JWT required — nodes need a token first)
   app.use('/api/register', registerRoute)
 
+  // Public: user auth (register/login — no JWT required)
+  app.use('/api/auth', authRoute)
+
   // Public: ClawChat (nodes authenticate via WebSocket nodeId)
   app.use('/api/chat', chatRouter)
 
@@ -183,6 +188,7 @@ export function createServer(): Application {
   app.use('/api/org-memory', orgMemoryRoute)
   app.use('/api/ask', askRoute)
   app.use('/api/social', socialRoute)
+  app.use('/api/groups', groupsRoute)
 
   // 404 handler
   app.use((_req: Request, res: Response) => {
