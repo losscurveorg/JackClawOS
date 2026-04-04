@@ -15,6 +15,7 @@ import { registerProviders } from './commands/providers.js';
 import { registerLogs } from './commands/logs.js';
 import { registerStop } from './commands/stop';
 import { registerSocial } from './commands/social';
+import { registerFilter } from './commands/filter';
 
 const program = new Command();
 
@@ -40,5 +41,6 @@ registerProviders(program);
 registerLogs(program);
 registerStop(program);
 registerSocial(program);
+registerFilter(program);
 
 program.parse(process.argv);

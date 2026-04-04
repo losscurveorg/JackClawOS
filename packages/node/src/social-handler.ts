@@ -10,6 +10,8 @@
  */
 
 import type { SocialMessage, ContactRequest } from '@jackclaw/protocol'
+import { MessageFilter } from './ai-filter'
+import { getEmotionSensor, type Sentiment } from './ai-emotion'
 
 export interface SocialHandlerOptions {
   nodeId: string
@@ -22,6 +24,9 @@ export interface SocialHandlerOptions {
 }
 
 export class SocialHandler {
+  private readonly filter = new MessageFilter()
+  private readonly emotion = getEmotionSensor()
+
   constructor(private opts: SocialHandlerOptions) {}
 
   /** 处理 WebSocket 收到的事件 */
@@ -45,7 +50,44 @@ export class SocialHandler {
   private _onSocialMessage(msg: SocialMessage): void {
     const from = msg.fromAgent
     const content = msg.content.slice(0, 120)
-    console.log(`[social] 📨 Message from ${from}: ${content}`)
+
+    const result = this.filter.analyze(msg)
+
+    if (result.action === 'block') {
+      // Silent discard — already logged by MessageFilter
+      console.log(`[social] 🚫 Blocked message from ${from}: ${result.reason}`)
+      return
+    }
+
+    // Emotion analysis
+    const emotion = this.emotion.analyze(msg.content)
+    const threadId = msg.thread ?? msg.id
+    this.emotion.trackMoodHistory(threadId, emotion.sentiment, emotion.confidence)
+
+    // Build emotion hint for owner notification
+    const emotionHint = this._emotionHint(emotion.sentiment)
+
+    if (result.action === 'flag') {
+      console.log(`[social] ⚠️  Suspicious message from ${from}: ${content} [${result.reason}]`)
+      if (this.opts.webhookUrl) {
+        this._pushToOwner({
+          type: 'social_message',
+          from,
+          content: msg.content,
+          messageId: msg.id,
+          thread: msg.thread,
+          ts: msg.ts,
+          warning: result.reason,
+          filterConfidence: result.confidence,
+          emotionHint,
+          emotion: emotion.sentiment,
+        })
+      }
+      return
+    }
+
+    // action === 'allow'
+    console.log(`[social] 📨 Message from ${from}: ${content}${emotionHint ? ` ${emotionHint}` : ''}`)
 
     if (this.opts.webhookUrl) {
       this._pushToOwner({
@@ -55,7 +97,20 @@ export class SocialHandler {
         messageId: msg.id,
         thread: msg.thread,
         ts: msg.ts,
+        emotionHint,
+        emotion: emotion.sentiment,
+        emotionKeywords: emotion.keywords,
       })
+    }
+  }
+
+  /** 根据情绪返回给主人的提示文字 */
+  private _emotionHint(sentiment: Sentiment): string {
+    switch (sentiment) {
+      case 'urgent':   return '⚠️ 对方似乎比较着急'
+      case 'negative': return '😟 对方情绪有些负面'
+      case 'positive': return '😊 对方心情不错'
+      default:         return ''
     }
   }
 
