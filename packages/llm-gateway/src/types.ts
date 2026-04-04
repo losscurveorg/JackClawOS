@@ -126,4 +126,8 @@ export interface GatewayConfig {
   fallbackChain?: string[]
   /** Route rules: model pattern → provider */
   routing?: Array<{ pattern: string; provider: string }>
+  /** Gateway-level request timeout in ms (default 30000) */
+  timeoutMs?: number
+  /** Max retry attempts for network errors (default 3) */
+  maxRetries?: number
 }

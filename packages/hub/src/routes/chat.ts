@@ -14,13 +14,72 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { IncomingMessage } from 'http'
 import { ChatStore } from '../store/chat'
 import type { ChatMessage, ChatGroup } from '../store/chat'
-import { isHumanTarget, getHuman, pushToHuman } from '../store/human-registry'
+import { isHumanTarget, getHuman, pushToHuman, registerHuman, listHumans } from '../store/human-registry'
 
 const router = Router()
 const store = new ChatStore()
 
 // WebSocket 连接池：nodeId → ws
 const wsClients = new Map<string, WebSocket>()
+
+// 连接上限
+const WS_MAX_CONNECTIONS = 1000
+
+// 心跳追踪：nodeId → isAlive
+const wsAlive = new Map<string, boolean>()
+
+// 全局心跳定时器（30s interval）
+const HEARTBEAT_INTERVAL = 30_000
+
+setInterval(() => {
+  for (const [nodeId, ws] of wsClients) {
+    if (!wsAlive.get(nodeId)) {
+      // 上次 ping 没收到 pong，强制断开
+      console.log(`[chat-ws] ${nodeId} heartbeat timeout, closing`)
+      ws.terminate()
+      wsClients.delete(nodeId)
+      wsAlive.delete(nodeId)
+      continue
+    }
+    wsAlive.set(nodeId, false)
+    ws.ping()
+  }
+}, HEARTBEAT_INTERVAL)
+
+/**
+ * 人→人消息路由核心逻辑
+ *
+ * 优先级：
+ * 1. human 有 agentNodeId → 通过 Agent 中转（WebSocket / 离线队列）
+ *    消息携带 metadata.humanTarget，Agent 负责最终推送到 human webhookUrl
+ * 2. human 仅有 webhookUrl → 直接 webhook 推送（兜底）
+ */
+function deliverToHuman(target: string, msg: ChatMessage): void {
+  const human = getHuman(target)
+  if (!human) return
+
+  if (human.agentNodeId) {
+    const agentPayload: ChatMessage = {
+      ...msg,
+      to: human.agentNodeId,
+      metadata: {
+        ...msg.metadata,
+        humanTarget: human.humanId,
+        humanDisplayName: human.displayName,
+      },
+    }
+    const agentWs = wsClients.get(human.agentNodeId)
+    if (agentWs && agentWs.readyState === WebSocket.OPEN) {
+      agentWs.send(JSON.stringify({ event: 'message', data: agentPayload }))
+    } else {
+      store.queueForOffline(human.agentNodeId, agentPayload)
+    }
+  } else {
+    // 无 Agent，直接 webhook（兜底）
+    pushToHuman(human, { from: msg.from, content: msg.content, type: msg.type, id: msg.id })
+      .catch(() => {})
+  }
+}
 
 // ─── REST 路由 ────────────────────────────────────────────────────────────────
 
@@ -50,13 +109,10 @@ router.post('/send', (req: Request, res: Response) => {
       ? { ...msg, groupId: group.groupId, groupName: group.name }
       : msg
 
-    // Human 账号：webhook 推送
+    // Human 账号：优先走 agentNodeId 中转，无 Agent 则直接 webhook
     if (isHumanTarget(target)) {
-      const human = getHuman(target)
-      if (human) {
-        pushToHuman(human, { from: msg.from, content: msg.content, type: msg.type, id: msg.id })
-          .catch(() => {})
-      }
+      deliverToHuman(target, payload as ChatMessage)
+      delivered.push(target)
       continue
     }
 
@@ -136,9 +192,6 @@ router.get('/groups', (req: Request, res: Response) => {
 })
 
 // POST /chat/human/register — 注册人类账号（humanId + webhookUrl）
-// 之后发消息时 to: ["bob-human", "bob-node"] 即可同时送达人和 AI
-import { registerHuman, listHumans } from '../store/human-registry'
-
 router.post('/human/register', (req: Request, res: Response) => {
   const { humanId, displayName, agentNodeId, webhookUrl, feishuOpenId } = req.body ?? {}
   if (!humanId || !displayName) {
@@ -169,14 +222,27 @@ export function attachChatWss(server: import('http').Server): WebSocketServer {
       return
     }
 
-    // 注册连接
-    wsClients.set(nodeId, ws)
-    console.log(`[chat-ws] ${nodeId} connected`)
+    // 连接数限制：超过上限返回 503
+    if (wsClients.size >= WS_MAX_CONNECTIONS) {
+      console.warn(`[chat-ws] Connection limit reached (${WS_MAX_CONNECTIONS}), rejecting ${nodeId}`)
+      ws.close(4503, 'Service Unavailable: connection limit reached')
+      return
+    }
 
-    // 上线立即推送离线消息
+    // 注册连接，初始化心跳状态
+    wsClients.set(nodeId, ws)
+    wsAlive.set(nodeId, true)
+    console.log(`[chat-ws] ${nodeId} connected (total: ${wsClients.size})`)
+
+    // pong 回来时标记存活
+    ws.on('pong', () => {
+      wsAlive.set(nodeId, true)
+    })
+
+    // 上线立即推送离线消息（逐条以 message 事件推送）
     const pending = store.drainInbox(nodeId)
-    if (pending.length > 0) {
-      ws.send(JSON.stringify({ event: 'inbox', data: pending }))
+    for (const offlineMsg of pending) {
+      ws.send(JSON.stringify({ event: 'message', data: offlineMsg }))
     }
 
     ws.on('message', (raw) => {
@@ -198,12 +264,9 @@ export function attachChatWss(server: import('http').Server): WebSocketServer {
             ? { ...msg, groupId: group.groupId, groupName: group.name }
             : msg
 
-          // Human 账号：走 webhook 推送（手机/飞书/ClawChat App）
+          // Human 账号：优先走 agentNodeId 中转，无 Agent 则直接 webhook
           if (isHumanTarget(target)) {
-            const human = getHuman(target)
-            if (human) {
-              setImmediate(() => pushToHuman(human, { from: msg.from, content: msg.content, type: msg.type, id: msg.id }))
-            }
+            setImmediate(() => deliverToHuman(target, payload as ChatMessage))
             continue
           }
 
@@ -272,7 +335,8 @@ export function attachChatWss(server: import('http').Server): WebSocketServer {
 
     ws.on('close', () => {
       wsClients.delete(nodeId)
-      console.log(`[chat-ws] ${nodeId} disconnected`)
+      wsAlive.delete(nodeId)
+      console.log(`[chat-ws] ${nodeId} disconnected (total: ${wsClients.size})`)
     })
   })
 

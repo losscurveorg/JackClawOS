@@ -15,51 +15,56 @@ router.get('/', (req: Request, res: Response): void => {
   // CEO-only check (role set on JWT by auth middleware)
   const { role } = (req as Request & { jwtPayload?: { nodeId: string; role: string } }).jwtPayload ?? {}
   if (role !== 'ceo') {
-    res.status(403).json({ error: 'Access denied. CEO role required.' })
+    res.status(403).json({ error: 'Access denied. CEO role required.', code: 'FORBIDDEN' })
     return
   }
 
-  const nodes = getAllNodes()
+  try {
+    const nodes = getAllNodes()
 
-  const result = nodes.map(node => {
-    const lastReport = getLastReportEntry(node.nodeId)
-    const unackedAlerts = getAlerts(node.nodeId, { acknowledged: false })
-    const snapshot = getLatestSnapshot(node.nodeId)
+    const result = nodes.map(node => {
+      const lastReport = getLastReportEntry(node.nodeId)
+      const unackedAlerts = getAlerts(node.nodeId, { acknowledged: false })
+      const snapshot = getLatestSnapshot(node.nodeId)
 
-    const hb = heartbeatStore.get(node.nodeId)
-    const healthMetrics = hb ? resolveStatus(hb) : null
+      const hb = heartbeatStore.get(node.nodeId)
+      const healthMetrics = hb ? resolveStatus(hb) : null
 
-    return {
-      nodeId: node.nodeId,
-      name: node.name,
-      role: node.role,
-      registeredAt: node.registeredAt,
-      lastReportAt: node.lastReportAt ?? null,
-      lastReportSummary: lastReport?.summary ?? null,
-      watchdogStatus: {
-        unackedAlerts: unackedAlerts.length,
-        criticalAlerts: unackedAlerts.filter(a => a.severity === 'critical').length,
-        lastSnapshotAt: snapshot?.timestamp ?? null,
-        memoryHash: snapshot?.memoryHash ?? null,
-      },
-      health: healthMetrics ? {
-        status: healthMetrics.status,
-        lastHeartbeat: healthMetrics.lastHeartbeat,
-        memUsage: healthMetrics.metrics.memUsage,
-        cpuLoad: healthMetrics.metrics.cpuLoad,
-        uptime: healthMetrics.metrics.uptime,
-        tasksCompleted: healthMetrics.metrics.tasksCompleted,
-        lastTaskAt: healthMetrics.metrics.lastTaskAt,
-      } : null,
-      workload: getWorkload(node.nodeId),
-    }
-  })
+      return {
+        nodeId: node.nodeId,
+        name: node.name,
+        role: node.role,
+        registeredAt: node.registeredAt,
+        lastReportAt: node.lastReportAt ?? null,
+        lastReportSummary: lastReport?.summary ?? null,
+        watchdogStatus: {
+          unackedAlerts: unackedAlerts.length,
+          criticalAlerts: unackedAlerts.filter(a => a.severity === 'critical').length,
+          lastSnapshotAt: snapshot?.timestamp ?? null,
+          memoryHash: snapshot?.memoryHash ?? null,
+        },
+        health: healthMetrics ? {
+          status: healthMetrics.status,
+          lastHeartbeat: healthMetrics.lastHeartbeat,
+          memUsage: healthMetrics.metrics.memUsage,
+          cpuLoad: healthMetrics.metrics.cpuLoad,
+          uptime: healthMetrics.metrics.uptime,
+          tasksCompleted: healthMetrics.metrics.tasksCompleted,
+          lastTaskAt: healthMetrics.metrics.lastTaskAt,
+        } : null,
+        workload: getWorkload(node.nodeId),
+      }
+    })
 
-  res.json({
-    success: true,
-    total: result.length,
-    nodes: result,
-  })
+    res.json({
+      success: true,
+      total: result.length,
+      nodes: result,
+    })
+  } catch (err: any) {
+    console.error('[nodes] Error:', err)
+    res.status(500).json({ error: err.message || 'Failed to list nodes', code: 'INTERNAL_ERROR' })
+  }
 })
 
 /**
@@ -72,7 +77,7 @@ router.post('/:nodeId/workload', (req: Request, res: Response): void => {
   const { nodeId } = req.params
 
   if (jwtPayload.role !== 'ceo' && jwtPayload.nodeId !== nodeId) {
-    res.status(403).json({ error: 'Access denied. Can only push your own workload.' })
+    res.status(403).json({ error: 'Access denied. Can only push your own workload.', code: 'FORBIDDEN' })
     return
   }
 
@@ -82,12 +87,17 @@ router.post('/:nodeId/workload', (req: Request, res: Response): void => {
     typeof body.queuedTasks !== 'number' ||
     typeof body.completedToday !== 'number'
   ) {
-    res.status(400).json({ error: 'Missing required fields: activeTasks, queuedTasks, completedToday' })
+    res.status(400).json({ error: 'Missing required fields: activeTasks, queuedTasks, completedToday', code: 'VALIDATION_ERROR' })
     return
   }
 
-  setWorkload(nodeId, { ...body, nodeId, updatedAt: body.updatedAt ?? Date.now() } as WorkloadSnapshot)
-  res.json({ success: true })
+  try {
+    setWorkload(nodeId, { ...body, nodeId, updatedAt: body.updatedAt ?? Date.now() } as WorkloadSnapshot)
+    res.json({ success: true })
+  } catch (err: any) {
+    console.error('[nodes] workload error:', err)
+    res.status(500).json({ error: err.message || 'Failed to update workload', code: 'INTERNAL_ERROR' })
+  }
 })
 
 export default router

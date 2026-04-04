@@ -1,7 +1,7 @@
 // JackClaw Hub - Express Server
 // Central node for CEO: receives and aggregates agent reports
 
-import express, { Application, Request, Response, NextFunction } from 'express'
+import express, { Application, Request, Response, NextFunction, RequestHandler } from 'express'
 import rateLimit from 'express-rate-limit'
 import morgan from 'morgan'
 import jwt from 'jsonwebtoken'
@@ -20,6 +20,7 @@ import humanReviewRoute from './routes/human-review'
 import paymentRoute from './routes/payment'
 import planRoute from './routes/plan'
 import { chatRouter, attachChatWss } from './routes/chat'
+import humansRoute from './routes/humans'
 import teachRoute from './routes/teach'
 import orgNormRoute from './routes/org-norm'
 import orgMemoryRoute from './routes/org-memory'
@@ -77,6 +78,20 @@ export function getHubKeys(): HubKeys {
   fs.writeFileSync(KEYS_FILE, JSON.stringify(_hubKeys, null, 2), { mode: 0o600 })
   console.log('[hub] Hub key pair generated and saved.')
   return _hubKeys
+}
+
+// ─── Async Handler Wrapper ────────────────────────────────────────────────────
+
+/**
+ * Wraps an async route handler so unhandled promise rejections
+ * are forwarded to the Express error middleware instead of crashing.
+ */
+export function asyncHandler(
+  fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>
+): RequestHandler {
+  return (req, res, next) => {
+    fn(req, res, next).catch(next)
+  }
 }
 
 // ─── JWT Auth Middleware ───────────────────────────────────────────────────────
@@ -147,6 +162,9 @@ export function createServer(): Application {
   // Public: ClawChat (nodes authenticate via WebSocket nodeId)
   app.use('/api/chat', chatRouter)
 
+  // Public: Human accounts — humanToken auth (no JWT needed)
+  app.use('/api/humans', humansRoute)
+
   // Protected: all other routes require JWT
   app.use('/api/', jwtAuthMiddleware)
   app.use('/api/report', reportRoute)
@@ -172,7 +190,7 @@ export function createServer(): Application {
   // Error handler
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     console.error('[hub] Unhandled error:', err)
-    res.status(500).json({ error: 'Internal server error' })
+    res.status(500).json({ error: err.message || 'Internal server error', code: 'INTERNAL_ERROR' })
   })
 
   return app

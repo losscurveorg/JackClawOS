@@ -1,3 +1,15 @@
+// ── Global error handlers — must be first ───────────────────────────────────
+process.on('uncaughtException', (err: Error) => {
+  console.error('[fatal] uncaughtException:', err.stack ?? err.message)
+  // Keep process alive — log and continue
+})
+
+process.on('unhandledRejection', (reason: unknown) => {
+  const msg = reason instanceof Error ? reason.stack ?? reason.message : String(reason)
+  console.error('[fatal] unhandledRejection:', msg)
+  // Keep process alive — log and continue
+})
+
 import cron from 'node-cron'
 import { loadConfig } from './config'
 import { loadOrCreateIdentity } from './identity'
@@ -53,7 +65,7 @@ async function main() {
   chatClient.connect()
 
   // 2. Start HTTP server
-  const app = createServer(identity, config)
+  const app = createServer(identity, config, chatClient)
   app.listen(config.port, () => {
     console.log(`[server] Listening on port ${config.port}`)
   })

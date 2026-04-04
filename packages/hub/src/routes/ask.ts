@@ -7,10 +7,11 @@
 import { Router, Request, Response } from 'express'
 import http from 'http'
 import { getAllNodes, getNode } from '../store/nodes.js'
+import { asyncHandler } from '../server.js'
 
 const router = Router()
 
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', asyncHandler(async (req: Request, res: Response) => {
   const { nodeId, prompt, model, systemPrompt, temperature, max_tokens } = req.body
 
   if (!prompt) {
@@ -54,8 +55,8 @@ router.post('/', async (req: Request, res: Response) => {
 
     res.json({ ...result, routedTo: targetNode.nodeId })
   } catch (err: any) {
-    res.status(502).json({ error: `Node unreachable: ${err.message}`, nodeId: targetNode.nodeId })
+    res.status(502).json({ error: `Node unreachable: ${err.message}`, code: 'BAD_GATEWAY', nodeId: targetNode.nodeId })
   }
-})
+}))
 
 export default router

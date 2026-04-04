@@ -18,16 +18,27 @@ export interface HumanAccount {
   agentNodeId?: string     // 关联的 AI Agent nodeId（bob-node）
   webhookUrl?: string      // 推送 URL（OpenClaw 实例 / ClawChat App）
   feishuOpenId?: string    // 飞书 open_id（走飞书推送）
+  humanToken: string       // Bearer token，用于 /humans/message 鉴权
   registeredAt: number
   lastSeenAt?: number
 }
 
 const humans = new Map<string, HumanAccount>()
 
-export function registerHuman(account: Omit<HumanAccount, 'registeredAt'>): HumanAccount {
-  const h: HumanAccount = { ...account, registeredAt: Date.now() }
+export function registerHuman(account: Omit<HumanAccount, 'registeredAt' | 'humanToken'>): HumanAccount {
+  // Reuse existing token if re-registering
+  const existing = humans.get(account.humanId)
+  const humanToken = existing?.humanToken ?? randomUUID()
+  const h: HumanAccount = { ...account, humanToken, registeredAt: Date.now() }
   humans.set(account.humanId, h)
   return h
+}
+
+export function getHumanByToken(token: string): HumanAccount | undefined {
+  for (const h of humans.values()) {
+    if (h.humanToken === token) return h
+  }
+  return undefined
 }
 
 export function getHuman(humanId: string): HumanAccount | undefined {

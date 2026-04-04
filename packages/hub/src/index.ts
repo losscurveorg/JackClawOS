@@ -4,6 +4,16 @@ import http from 'http'
 import { createServer } from './server'
 import { attachChatWss } from './routes/chat'
 
+// ─── Process-level error guards (log but don't crash) ─────────────────────────
+
+process.on('uncaughtException', (err) => {
+  console.error('[hub] uncaughtException:', err)
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[hub] unhandledRejection:', reason)
+})
+
 const PORT = parseInt(process.env.HUB_PORT ?? '3100', 10)
 
 const app = createServer()

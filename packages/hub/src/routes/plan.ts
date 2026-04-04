@@ -7,10 +7,11 @@
 
 import { Router, Request, Response } from 'express'
 import { getAllNodes } from '../store/nodes'
+import { asyncHandler } from '../server'
 
 const router = Router()
 
-router.post('/estimate', async (req: Request, res: Response): Promise<void> => {
+router.post('/estimate', asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const { taskId, title, description, nodeId, useAi = true } = req.body ?? {}
   if (!title || !description) {
     res.status(400).json({ error: 'title and description required' })
@@ -76,6 +77,6 @@ router.post('/estimate', async (req: Request, res: Response): Promise<void> => {
     },
     note: 'Heuristic estimate (no AI). Specify nodeId for AI-powered planning.',
   })
-})
+}))
 
 export default router

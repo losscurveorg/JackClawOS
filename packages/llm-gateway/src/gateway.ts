@@ -112,7 +112,7 @@ export class LLMGateway {
       if (!fallback || fallback === provider) continue
       try {
         console.log(`[gateway] Trying fallback: ${fallbackName}`)
-        return await this.chatWithProvider(fallback, request)
+        return await this.chatWithProvider(fallback, request, true)
       } catch (err: any) {
         console.warn(`[gateway] ${fallbackName} also failed: ${err.message}`)
       }
@@ -185,6 +185,36 @@ export class LLMGateway {
     return resp.choices[0]?.message.content ?? ''
   }
 
+  /**
+   * Try a prioritised list of providers with the given prompt.
+   * Returns the first successful response text.
+   * Each provider is attempted using its default/first configured model.
+   */
+  async withFallback(providerNames: string[], prompt: string, systemPrompt?: string): Promise<string> {
+    const messages = systemPrompt
+      ? [{ role: 'system' as const, content: systemPrompt }, { role: 'user' as const, content: prompt }]
+      : [{ role: 'user' as const, content: prompt }]
+
+    let lastErr: Error | undefined
+    for (let i = 0; i < providerNames.length; i++) {
+      const name = providerNames[i]
+      const provider = this.providers.get(name)
+      if (!provider) {
+        console.warn(`[gateway] withFallback: provider not found: ${name}, skipping`)
+        continue
+      }
+      const model = provider.models[0] ?? name
+      try {
+        const resp = await this.chatWithProvider(provider, { model, messages }, i > 0)
+        return resp.choices[0]?.message.content ?? ''
+      } catch (err: any) {
+        console.warn(`[gateway] withFallback: ${name} failed: ${err.message}`)
+        lastErr = err
+      }
+    }
+    throw lastErr ?? new Error('[gateway] withFallback: all providers failed')
+  }
+
   // ─── Stats & cost ─────────────────────────────────────────────────
 
   getStats(): GatewayStats { return { ...this.stats } }
@@ -217,8 +247,54 @@ export class LLMGateway {
 
   // ─── Private helpers ──────────────────────────────────────────────
 
-  private async chatWithProvider(provider: LLMProvider, request: ChatRequest): Promise<ChatResponse> {
-    const resp = await provider.chat(request)
+  private withTimeout<T>(ms: number, promise: Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Gateway timeout after ${ms}ms`)), ms)
+      promise.then(
+        v => { clearTimeout(timer); resolve(v) },
+        e => { clearTimeout(timer); reject(e) },
+      )
+    })
+  }
+
+  /** 4xx = client error, do not retry. Network errors / timeouts = retryable. */
+  private isRetryable(err: Error): boolean {
+    return !/api error 4\d\d/i.test(err.message)
+  }
+
+  private async withRetry<T>(fn: () => Promise<T>, maxAttempts: number, baseDelayMs = 500): Promise<T> {
+    let lastErr!: Error
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        return await fn()
+      } catch (err: any) {
+        lastErr = err
+        if (!this.isRetryable(err)) throw err
+        if (attempt < maxAttempts - 1) {
+          const delay = baseDelayMs * Math.pow(2, attempt)
+          await new Promise(r => setTimeout(r, delay))
+        }
+      }
+    }
+    throw lastErr
+  }
+
+  private async chatWithProvider(provider: LLMProvider, request: ChatRequest, isFallback = false): Promise<ChatResponse> {
+    const timeoutMs = this.config.timeoutMs ?? 30000
+    const maxRetries = this.config.maxRetries ?? 3
+    const t0 = Date.now()
+
+    const resp = await this.withRetry(
+      () => this.withTimeout(timeoutMs, provider.chat(request)),
+      maxRetries,
+    )
+
+    const latencyMs = Date.now() - t0
+    console.log(
+      `[gateway] ${provider.name} ok | model=${request.model} | latency=${latencyMs}ms` +
+      ` | tokens=${resp.usage.total_tokens}${isFallback ? ' | fallback=true' : ''}`,
+    )
+
     // Track stats
     this.stats.totalRequests++
     this.stats.totalTokens += resp.usage.total_tokens

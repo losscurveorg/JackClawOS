@@ -5,6 +5,7 @@
 
 import { Router, Request, Response } from 'express'
 import { humanInLoopManager, HumanReviewRequest } from '@jackclaw/protocol'
+import { asyncHandler } from '../server'
 
 const router = Router()
 
@@ -13,7 +14,7 @@ const router = Router()
  * Body: Omit<HumanReviewRequest, 'requestId' | 'createdAt'>
  * Returns: { requestId }
  */
-router.post('/request', async (req: Request, res: Response): Promise<void> => {
+router.post('/request', asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const body = req.body as Partial<Omit<HumanReviewRequest, 'requestId' | 'createdAt'>>
 
   // 基本字段校验
@@ -51,25 +52,25 @@ router.post('/request', async (req: Request, res: Response): Promise<void> => {
 
     res.status(201).json({ requestId })
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message })
+    res.status(500).json({ error: (err as Error).message, code: 'INTERNAL_ERROR' })
   }
-})
+}))
 
 /**
  * GET /api/review/pending
  * Query: ?nodeId=xxx (optional)
  * Returns: { requests: HumanReviewRequest[] }
  */
-router.get('/pending', async (req: Request, res: Response): Promise<void> => {
+router.get('/pending', asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const nodeId = req.query.nodeId as string | undefined
 
   try {
     const requests = await humanInLoopManager.getPending(nodeId)
     res.json({ requests })
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message })
+    res.status(500).json({ error: (err as Error).message, code: 'INTERNAL_ERROR' })
   }
-})
+}))
 
 /**
  * POST /api/review/resolve/:requestId
@@ -80,7 +81,7 @@ router.get('/pending', async (req: Request, res: Response): Promise<void> => {
  * human-token = HMAC-SHA256(requestId, HUMAN_TOKEN_SECRET)
  * 只有持有 secret 的真人调用者可以执行此操作。
  */
-router.post('/resolve/:requestId', async (req: Request, res: Response): Promise<void> => {
+router.post('/resolve/:requestId', asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const { requestId } = req.params
   const humanToken = req.headers['human-token'] as string | undefined
   const { decision } = req.body as { decision?: string }
@@ -107,9 +108,9 @@ router.post('/resolve/:requestId', async (req: Request, res: Response): Promise<
     } else if (message.includes('already resolved')) {
       res.status(409).json({ error: message })
     } else {
-      res.status(400).json({ error: message })
+      res.status(400).json({ error: message, code: 'BAD_REQUEST' })
     }
   }
-})
+}))
 
 export default router

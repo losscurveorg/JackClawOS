@@ -10,6 +10,7 @@ import { createOwnerAuthRouter } from './routes/owner-auth'
 import { WorkloadTracker } from './workload-tracker'
 import { getPerformanceLedger } from './performance-ledger'
 import { getNodeGateway } from './llm-gateway'
+import type { NodeChatClient } from './chat-client'
 
 // Harness runner 接口（运行时注入，避免编译期跨包依赖）
 export type HarnessRunner = (opts: {
@@ -25,7 +26,7 @@ export function registerHarnessRunner(runner: HarnessRunner): void {
   harnessRunner = runner
 }
 
-export function createServer(identity: NodeIdentity, config: JackClawConfig) {  const app = express()
+export function createServer(identity: NodeIdentity, config: JackClawConfig, chatClient?: NodeChatClient) {  const app = express()
   app.use(express.json({ limit: '1mb' }))
 
   // Workload tracker — scoped to this server instance
@@ -33,7 +34,14 @@ export function createServer(identity: NodeIdentity, config: JackClawConfig) {  
 
   // ── Health check ────────────────────────────────────────────────────────────
   app.get('/health', (_req: Request, res: Response) => {
-    res.json({ status: 'ok', nodeId: identity.nodeId, ts: Date.now(), workload: workloadTracker.getSnapshot() })
+    res.json({
+      status: 'ok',
+      uptime: process.uptime(),
+      hubConnected: chatClient ? chatClient.isConnected() : null,
+      nodeId: identity.nodeId,
+      ts: Date.now(),
+      workload: workloadTracker.getSnapshot(),
+    })
   })
 
   // ── Ask: direct LLM call via gateway ──────────────────────────────────────
