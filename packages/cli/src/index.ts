@@ -19,6 +19,7 @@ import { registerSchedule, registerRemind, registerReminders } from './commands/
 import { registerFilter } from './commands/filter';
 import { registerSecretary } from './commands/secretary';
 import { registerTranslate } from './commands/translate';
+import { registerMoltbook } from './commands/moltbook';
 
 const program = new Command();
 
@@ -50,5 +51,6 @@ registerReminders(program);
 registerFilter(program);
 registerSecretary(program);
 registerTranslate(program);
+registerMoltbook(program);
 
 program.parse(process.argv);

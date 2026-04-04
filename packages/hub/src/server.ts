@@ -33,6 +33,7 @@ import groupsRoute from './routes/groups'
 import federationRoute from './routes/federation'
 import receiptRoute from './routes/receipt'
 import profilePageRoute from './routes/profile-page'
+import moltbookRoute from './routes/moltbook'
 import { initFederationManager } from './federation'
 import { JWTPayload } from './types'
 
@@ -223,6 +224,7 @@ export function createServer(): Application {
   app.use('/api/groups', groupsRoute)
   // Files: raw body handled in-route; rate-limited separately
   app.use('/api/files', rateLimiter.upload, filesRoute)
+  app.use('/api/moltbook', moltbookRoute)
 
   // 404 handler
   app.use((_req: Request, res: Response) => {

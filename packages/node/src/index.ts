@@ -25,6 +25,8 @@ import { createNodeGateway } from './llm-gateway'
 import { SocialHandler } from './social-handler'
 import { AiSecretary } from './ai-secretary'
 import { createConcierge } from './ai-concierge'
+import { MoltbookClient } from './integrations/moltbook'
+import { createMoltbookAgent } from './integrations/moltbook-agent'
 
 async function main() {
   console.log('🦞 JackClaw Node starting...')
@@ -118,6 +120,26 @@ async function main() {
     },
   })
   console.log(`[secretary] Initialized — mode: ${secretary.getMode()}`)
+
+  // 3b. Moltbook integration (optional — only if api_key configured)
+  const moltbookClient = new MoltbookClient()
+  if (moltbookClient.isConfigured()) {
+    const moltbookAgent = createMoltbookAgent(moltbookClient, aiClient, ownerMemory, identity.nodeId)
+    console.log('[moltbook] Client initialized — agent connected')
+
+    // Daily digest cron: every day at 8:30am
+    cron.schedule('30 8 * * *', async () => {
+      try {
+        const digest = await moltbookAgent.dailyDigest()
+        console.log('[moltbook] Daily digest:\n' + digest)
+      } catch (err: any) {
+        console.error('[moltbook] Digest cron failed:', err.message)
+      }
+    })
+    console.log('[moltbook] Daily digest scheduled: 08:30 daily')
+  } else {
+    console.log('[moltbook] Not configured — run: jackclaw moltbook connect <api_key>')
+  }
 
   // 注册 Harness runner（运行时注入，编译期无跨包依赖）
   try {
