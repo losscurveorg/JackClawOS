@@ -5,7 +5,7 @@
 import { Command } from 'commander'
 import chalk from 'chalk'
 import axios from 'axios'
-import { loadConfig, loadState } from '../config-utils.js'
+import { loadConfig, loadState, resolveHubUrl } from '../config-utils.js'
 
 function fmtBytes(n: number): string {
   if (n > 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)}MB`
@@ -27,13 +27,8 @@ export function registerLogs(program: Command): void {
     .action(async (nodeId: string | undefined, opts: { watch?: boolean; json?: boolean }) => {
       const config = loadConfig()
       const state = loadState()
-      const hubUrl = config?.hubUrl || process.env.HUB_URL
+      const hubUrl = resolveHubUrl(config?.hubUrl)
       const token = state?.token || process.env.HUB_TOKEN
-
-      if (!hubUrl) {
-        console.error(chalk.red('✗ Hub URL not configured.'))
-        process.exit(1)
-      }
 
       const headers = token ? { Authorization: `Bearer ${token}` } : {}
 

@@ -4,22 +4,21 @@
   "description": "JackClaw node agent — registers to Hub, reports daily, receives tasks",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "bin": {
-    "jackclaw-node": "dist/src/cli.js"
-  },
   "scripts": {
     "build": "tsc",
     "dev": "ts-node src/index.ts",
-    "start": "node dist/src/index.js"
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@jackclaw/protocol": "^0.1.0",
     "@jackclaw/harness": "^0.1.0",
+    "@jackclaw/llm-gateway": "^0.1.0",
+    "@jackclaw/memory": "^0.1.0",
+    "@jackclaw/protocol": "^0.1.0",
+    "axios": "^1.6.0",
     "express": "^4.19.0",
     "node-cron": "^3.0.3",
-    "axios": "^1.6.0",
-    "@jackclaw/llm-gateway": "^0.1.0",
-    "@jackclaw/memory": "^0.1.0"
+    "ws": "^8.0.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

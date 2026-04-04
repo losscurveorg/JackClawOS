@@ -12,6 +12,9 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@jackclaw/hub": "^0.1.0",
+    "@jackclaw/node": "^0.1.0",
+    "@jackclaw/protocol": "^0.1.0",
     "@jackclaw/tunnel": "^0.1.0",
     "axios": "^1.6.0",
     "chalk": "^4.1.2",

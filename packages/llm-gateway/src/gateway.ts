@@ -21,6 +21,7 @@ import { SparkProvider } from './providers/spark.js'
 import { KimiProvider } from './providers/kimi.js'
 import { ZhipuProvider } from './providers/zhipu.js'
 import { BaichuanProvider } from './providers/baichuan.js'
+import { OllamaProvider } from './providers/ollama.js'
 
 // ─── Cost per 1M tokens (USD) ────────────────────────────────────────
 const PRICE_TABLE: Record<string, { input: number; output: number }> = {
@@ -240,7 +241,7 @@ export class LLMGateway {
   async pingAll(): Promise<Record<string, boolean>> {
     const results: Record<string, boolean> = {}
     await Promise.all([...this.providers.entries()].map(async ([name, p]) => {
-      results[name] = await p.ping().catch(() => false)
+      results[name] = await p.isAvailable().catch(() => false)
     }))
     return results
   }
@@ -337,6 +338,7 @@ export class LLMGateway {
       case 'kimi':      return new KimiProvider(config)
       case 'zhipu':     return new ZhipuProvider(config)
       case 'baichuan':  return new BaichuanProvider(config)
+      case 'ollama':    return new OllamaProvider(config)
       default:          return new OpenAICompatibleProvider(config)
     }
   }

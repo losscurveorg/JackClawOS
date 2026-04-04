@@ -19,7 +19,9 @@
     "node": ">=20.0.0"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "license": "MIT",
   "private": true,

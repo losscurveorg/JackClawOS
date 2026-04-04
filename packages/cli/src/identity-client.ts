@@ -139,7 +139,7 @@ export class IdentityClient {
       createdAt: Date.now(),
     }
 
-    const res = await fetch(`${this.hubUrl}/api/collab/invite`, {
+    const res = await fetch(`${this.hubUrl}/api/directory/collab/invite`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -173,7 +173,7 @@ export class IdentityClient {
       respondedAt: Date.now(),
     }
 
-    const res = await fetch(`${this.hubUrl}/api/collab/respond`, {
+    const res = await fetch(`${this.hubUrl}/api/directory/collab/respond`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -192,7 +192,7 @@ export class IdentityClient {
     action: 'pause' | 'resume' | 'end',
     outcome?: string
   ): Promise<CollaborationSession> {
-    const res = await fetch(`${this.hubUrl}/api/collab/sessions/${sessionId}`, {
+    const res = await fetch(`${this.hubUrl}/api/directory/collab/sessions/${sessionId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, outcome }),
@@ -212,7 +212,7 @@ export class IdentityClient {
     const params = new URLSearchParams({ handle: this.myHandle })
     if (status) params.set('status', status)
 
-    const res = await fetch(`${this.hubUrl}/api/collab/sessions?${params}`)
+    const res = await fetch(`${this.hubUrl}/api/directory/collab/sessions?${params}`)
     const data = await res.json() as { sessions: CollaborationSession[] }
     return data.sessions
   }
@@ -223,7 +223,7 @@ export class IdentityClient {
     if (!this.myHandle) return null
     const from = encodeURIComponent(this.myHandle)
     const to = encodeURIComponent(toHandle)
-    const res = await fetch(`${this.hubUrl}/api/collab/trust/${from}/${to}`)
+    const res = await fetch(`${this.hubUrl}/api/directory/collab/trust/${from}/${to}`)
     const data = await res.json() as { relation: TrustRelation | null }
     return data.relation
   }

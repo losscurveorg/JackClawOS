@@ -13,11 +13,12 @@ import type {
 
 export class OpenAICompatibleProvider implements LLMProvider {
   name: string
+  type: 'cloud' | 'local' = 'cloud'
   models: string[]
-  private baseUrl: string
-  private apiKey: string
-  private headers: Record<string, string>
-  private timeoutMs: number
+  protected baseUrl: string
+  protected apiKey: string
+  protected headers: Record<string, string>
+  protected timeoutMs: number
 
   constructor(config: ProviderConfig) {
     this.name = config.provider
@@ -109,6 +110,26 @@ export class OpenAICompatibleProvider implements LLMProvider {
     }
   }
 
+  async *stream(messages: ChatMessage[], options: Partial<ChatRequest> = {}): AsyncGenerator<string> {
+    const request: ChatRequest = {
+      model: this.models[0] ?? 'gpt-4o-mini',
+      messages,
+      ...options,
+    }
+    for await (const delta of this.chatStream(request)) {
+      const text = delta.choices[0]?.delta.content
+      if (text) yield text
+    }
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return this.ping()
+  }
+
+  async getModels(): Promise<string[]> {
+    return this.models
+  }
+
   async ping(): Promise<boolean> {
     try {
       await this.post('/v1/chat/completions', {
@@ -122,7 +143,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     }
   }
 
-  private buildBody(request: ChatRequest): Record<string, unknown> {
+  protected buildBody(request: ChatRequest): Record<string, unknown> {
     const body: Record<string, unknown> = {
       model: request.model,
       messages: request.messages,
@@ -139,7 +160,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     return body
   }
 
-  private post(path: string, body: unknown): Promise<any> {
+  protected post(path: string, body: unknown): Promise<any> {
     return new Promise((resolve, reject) => {
       const url = new URL(this.baseUrl + path)
       const transport = url.protocol === 'https:' ? https : http
@@ -162,6 +183,32 @@ export class OpenAICompatibleProvider implements LLMProvider {
       req.on('error', reject)
       req.on('timeout', () => { req.destroy(); reject(new Error(`${this.name} timeout`)) })
       req.write(JSON.stringify(body))
+      req.end()
+    })
+  }
+
+  protected get(path: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const url = new URL(this.baseUrl + path)
+      const transport = url.protocol === 'https:' ? https : http
+      const req = transport.request(url, {
+        method: 'GET',
+        headers: this.headers,
+        timeout: this.timeoutMs,
+      }, (res) => {
+        let d = ''
+        res.on('data', (c) => (d += c))
+        res.on('end', () => {
+          if (res.statusCode && res.statusCode >= 400) {
+            reject(new Error(`${this.name} API error ${res.statusCode}: ${d.slice(0, 200)}`))
+            return
+          }
+          try { resolve(JSON.parse(d)) }
+          catch { reject(new Error(`${this.name} invalid JSON: ${d.slice(0, 200)}`)) }
+        })
+      })
+      req.on('error', reject)
+      req.on('timeout', () => { req.destroy(); reject(new Error(`${this.name} timeout`)) })
       req.end()
     })
   }

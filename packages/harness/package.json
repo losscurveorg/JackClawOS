@@ -3,17 +3,19 @@
   "version": "0.1.0",
   "type": "module",
   "description": "JackClaw Harness Best Practice Framework — ACP harness adapter layer",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
   "exports": {
     ".": {
-      "import": "./src/index.ts",
-      "default": "./src/index.ts"
+      "import": "./dist/src/index.js",
+      "require": "./dist/src/index.js",
+      "types": "./dist/src/index.d.ts"
     }
   },
   "scripts": {
     "build": "tsc",
-    "dev": "ts-node src/index.ts"
+    "dev": "ts-node src/index.ts",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@jackclaw/protocol": "^0.1.0",
@@ -46,5 +48,10 @@
   "homepage": "https://github.com/DevJackKong/JackClawOS#readme",
   "bugs": {
     "url": "https://github.com/DevJackKong/JackClawOS/issues"
-  }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
 }

@@ -12,6 +12,7 @@ import type {
 
 export class AnthropicProvider implements LLMProvider {
   name = 'anthropic'
+  type: 'cloud' | 'local' = 'cloud'
   models: string[]
   private baseUrl: string
   private apiKey: string
@@ -215,5 +216,13 @@ export class AnthropicProvider implements LLMProvider {
       req.write(JSON.stringify(body))
       req.end()
     })
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return !!this.apiKey
+  }
+
+  async getModels(): Promise<string[]> {
+    return this.models
   }
 }

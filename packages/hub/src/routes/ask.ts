@@ -1,8 +1,8 @@
 /**
  * Hub /api/ask — proxy LLM requests to nodes
  *
- * POST /api/ask  { nodeId?, model?, prompt, systemPrompt?, temperature?, max_tokens? }
- * → 路由到指定 node 的 /api/ask，或自动选一个可用 worker node
+ * GET  /api/ask/providers  — list all nodes and their available LLM providers
+ * POST /api/ask            — proxy prompt to a node (round-robin if nodeId omitted)
  */
 import { Router, Request, Response } from 'express'
 import http from 'http'
@@ -11,6 +11,37 @@ import { asyncHandler } from '../server.js'
 
 const router = Router()
 
+// GET /providers — aggregate LLM provider lists from all registered nodes
+router.get('/providers', asyncHandler(async (_req: Request, res: Response) => {
+  const nodes = getAllNodes().filter(n => n.callbackUrl)
+  const results = await Promise.all(nodes.map(async (node) => {
+    try {
+      const url = new URL('/api/ask/providers', node.callbackUrl!)
+      const providers = await new Promise<string[]>((resolve) => {
+        const r = http.request(url, { method: 'GET', timeout: 5000 }, (resp) => {
+          let d = ''
+          resp.on('data', c => (d += c))
+          resp.on('end', () => {
+            try { resolve((JSON.parse(d) as { providers?: string[] }).providers ?? []) }
+            catch { resolve([]) }
+          })
+        })
+        r.on('error', () => resolve([]))
+        r.on('timeout', () => { r.destroy(); resolve([]) })
+        r.end()
+      })
+      return { nodeId: node.nodeId, providers }
+    } catch {
+      return { nodeId: node.nodeId, providers: [] }
+    }
+  }))
+
+  const nodeMap: Record<string, string[]> = {}
+  for (const { nodeId, providers } of results) nodeMap[nodeId] = providers
+  res.json({ nodes: nodeMap })
+}))
+
+// POST / — route prompt to a specific node or auto-select an available worker
 router.post('/', asyncHandler(async (req: Request, res: Response) => {
   const { nodeId, prompt, model, systemPrompt, temperature, max_tokens } = req.body
 

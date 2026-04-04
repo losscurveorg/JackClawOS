@@ -37,6 +37,20 @@ export function ensureConfigDir(): void {
   }
 }
 
+export const DEFAULT_HUB_URL = 'http://localhost:3100';
+
+/**
+ * Resolve Hub URL: JACKCLAW_HUB_URL env > HUB_URL env > config file > default.
+ */
+export function resolveHubUrl(configHubUrl?: string): string {
+  return (
+    process.env.JACKCLAW_HUB_URL ||
+    process.env.HUB_URL ||
+    configHubUrl ||
+    DEFAULT_HUB_URL
+  ).replace(/\/$/, '');
+}
+
 export function loadConfig(): JackClawConfig | null {
   if (!fs.existsSync(CONFIG_FILE)) return null;
   return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));

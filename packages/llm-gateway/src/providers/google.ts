@@ -12,6 +12,7 @@ import type {
 
 export class GoogleProvider implements LLMProvider {
   name = 'google'
+  type: 'cloud' | 'local' = 'cloud'
   models: string[]
   private apiKey: string
   private baseUrl: string
@@ -131,5 +132,13 @@ export class GoogleProvider implements LLMProvider {
       req.write(JSON.stringify(body))
       req.end()
     })
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return !!this.apiKey
+  }
+
+  async getModels(): Promise<string[]> {
+    return this.models
   }
 }

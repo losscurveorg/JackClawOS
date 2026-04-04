@@ -53,6 +53,20 @@ export { SparkProvider }    from './providers/spark.js'
 export { KimiProvider }     from './providers/kimi.js'
 export { ZhipuProvider }    from './providers/zhipu.js'
 export { BaichuanProvider } from './providers/baichuan.js'
+export { OllamaProvider }   from './providers/ollama.js'
+
+// ─── Router & Config ─────────────────────────────────────────────────
+
+export { ModelRouter } from './router.js'
+export type { RouteRequest, ModelInfo } from './router.js'
+
+export {
+  loadLLMConfig,
+  saveLLMConfig,
+  setLLMConfigValue,
+  getLLMConfigValue,
+} from './config.js'
+export type { LLMConfig, LLMProviderEntry } from './config.js'
 
 // ─── Quick factory ───────────────────────────────────────────────────
 

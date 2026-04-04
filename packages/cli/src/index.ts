@@ -21,6 +21,7 @@ import { registerSecretary } from './commands/secretary';
 import { registerTranslate } from './commands/translate';
 import { registerMoltbook } from './commands/moltbook';
 import { registerTask, registerTaskAsk } from './commands/task.js';
+import { registerModelCommand } from './commands/model.js';
 
 const program = new Command();
 
@@ -55,5 +56,6 @@ registerTranslate(program);
 registerMoltbook(program);
 registerTask(program);
 registerTaskAsk(program);
+registerModelCommand(program);
 
 program.parse(process.argv);

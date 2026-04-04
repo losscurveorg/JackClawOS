@@ -15,7 +15,7 @@ import os from 'os'
 import { randomUUID } from 'crypto'
 import { parseNaturalTime, parseDuration } from '@jackclaw/protocol'
 import type { ConciergeState, Reminder } from '@jackclaw/protocol'
-import { loadConfig } from '../config-utils.js'
+import { loadConfig, resolveHubUrl } from '../config-utils.js'
 
 // ─── 存储（与 AiConcierge 共享同一文件）──────────────────────────────────────
 
@@ -40,7 +40,7 @@ function saveState(state: ConciergeState): void {
 
 function getHub(opts: { hub?: string }): string {
   const cfg = loadConfig()
-  return (opts.hub ?? cfg?.hubUrl ?? 'http://localhost:3100').replace(/\/$/, '')
+  return resolveHubUrl(opts.hub ?? cfg?.hubUrl)
 }
 
 function getHandle(opts: { handle?: string; from?: string }): string {

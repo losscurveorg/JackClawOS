@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "description": "JackClaw OpenClaw Plugin — team reports and node status via any OpenClaw channel",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=22"
@@ -19,13 +20,12 @@
     "openclaw": ">=2026.3.28"
   },
   "devDependencies": {
-    "openclaw": "file:/opt/homebrew/lib/node_modules/openclaw",
     "typescript": "^5.4.0",
     "@types/node": "^20.0.0"
   },
   "openclaw": {
     "extensions": [
-      "./src/index.ts"
+      "./dist/index.js"
     ]
   },
   "publishConfig": {
@@ -45,5 +45,11 @@
   "homepage": "https://github.com/DevJackKong/JackClawOS#readme",
   "bugs": {
     "url": "https://github.com/DevJackKong/JackClawOS/issues"
-  }
+  },
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
 }

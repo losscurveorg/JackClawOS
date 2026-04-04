@@ -90,13 +90,24 @@ export interface ChatStreamDelta {
 
 export interface LLMProvider {
   name: string
-  /** Model IDs this provider supports */
+  /** 'cloud' = remote API, 'local' = runs on-device (Ollama, MLX, etc.) */
+  type: 'cloud' | 'local'
+  /** Model IDs this provider supports (static list; use getModels() for live list) */
   models: string[]
   /** Send a chat completion request */
   chat(request: ChatRequest): Promise<ChatResponse>
   /** Stream a chat completion (yields deltas) */
   chatStream?(request: ChatRequest): AsyncIterable<ChatStreamDelta>
-  /** Test connectivity */
+  /**
+   * Stream text tokens as plain strings — simplified API for chat UIs.
+   * Yields each text chunk as it arrives.
+   */
+  stream?(messages: ChatMessage[], options?: Partial<ChatRequest>): AsyncGenerator<string>
+  /** Whether this provider is currently reachable */
+  isAvailable(): Promise<boolean>
+  /** Live model list (may differ from static `models` array for local providers) */
+  getModels(): Promise<string[]>
+  /** @deprecated use isAvailable() */
   ping(): Promise<boolean>
 }
 

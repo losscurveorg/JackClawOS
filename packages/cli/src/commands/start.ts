@@ -129,9 +129,8 @@ export function registerStart(program: Command): void {
       const nodePort  = parseInt(opts.nodePort, 10)
       const tunnelMode = opts.tunnel === true ? 'cloudflare' : (opts.tunnel as string | undefined)
 
-      const mono = path.resolve(__dirname, '../../../../')
-      const hubScript  = path.join(mono, 'packages/hub/dist/index.js')
-      const nodeScript = path.join(mono, 'packages/node/dist/index.js')
+      const hubScript  = require.resolve('@jackclaw/hub')
+      const nodeScript = require.resolve('@jackclaw/node')
 
       const watchers: ProcessWatcher[] = []
 

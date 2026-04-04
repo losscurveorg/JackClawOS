@@ -5,7 +5,7 @@
 import { Command } from 'commander'
 import chalk from 'chalk'
 import axios from 'axios'
-import { loadConfig, loadState } from '../config-utils.js'
+import { loadConfig, loadState, resolveHubUrl } from '../config-utils.js'
 
 export function registerAsk(program: Command): void {
   program
@@ -18,13 +18,8 @@ export function registerAsk(program: Command): void {
       const config = loadConfig()
       const state = loadState()
 
-      const hubUrl = config?.hubUrl || process.env.HUB_URL
+      const hubUrl = resolveHubUrl(config?.hubUrl)
       const token = state?.token || process.env.HUB_TOKEN
-
-      if (!hubUrl) {
-        console.error(chalk.red('✗ Hub URL not configured. Run: jackclaw init or set HUB_URL'))
-        process.exit(1)
-      }
 
       const url = opts.node
         ? `${hubUrl}/api/ask/${opts.node}`

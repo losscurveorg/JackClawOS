@@ -8,7 +8,6 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import http from 'http';
 import { spawn, ChildProcess } from 'child_process';
-import path from 'path';
 import net from 'net';
 
 const DEMO_HUB_PORT = 3100;
@@ -66,8 +65,7 @@ export function registerDemo(program: Command): void {
 
       // Start Hub
       log('🏢', chalk.blue('Starting Hub (HQ)...'));
-      const mono = path.resolve(__dirname, '../../../../');
-      const hubScript = path.join(mono, 'packages/hub/dist/index.js');
+      const hubScript = require.resolve('@jackclaw/hub');
       const hubProc = spawn('node', [hubScript], {
         env: { ...process.env, HUB_PORT: String(DEMO_HUB_PORT) },
         stdio: 'pipe',
@@ -143,7 +141,7 @@ export function registerDemo(program: Command): void {
       ];
 
       for (const r of reports) {
-        await request('POST', '/api/report', {
+        await request('POST', '/api/reports', {
           summary: r.summary,
           period: 'daily',
           visibility: 'ceo',

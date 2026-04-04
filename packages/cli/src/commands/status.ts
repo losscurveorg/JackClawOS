@@ -37,7 +37,7 @@ export function registerStatus(program: Command): void {
         // Ping hub
         let hubStatus = chalk.gray('checking...');
         try {
-          await axios.get(`${config.hubUrl}/api/health`, { timeout: 5000 });
+          await axios.get(`${config.hubUrl}/health`, { timeout: 5000 });
           hubStatus = chalk.green('● online');
         } catch {
           hubStatus = chalk.red('● offline');
