@@ -905,6 +905,55 @@ async function testHumanReview() {
   ok('Double resolve → 409', r8.s === 409);
 }
 
+
+// ─── Sprint 4-5 Tests: Plugin, Health, Trace ──────────────────
+
+async function testPluginAPI() {
+  console.log('\n🔷 Plugin API');
+  const r1 = await req('GET', '/api/plugins', null, ceoToken);
+  ok('GET /api/plugins → 200', r1.s === 200);
+  ok('Has plugins array', Array.isArray(r1.b?.plugins));
+  ok('Has stats object', typeof r1.b?.stats === 'object');
+
+  const r2 = await req('GET', '/api/plugins/stats', null, ceoToken);
+  ok('GET /api/plugins/stats → 200', r2.s === 200);
+  ok('Has totalPlugins', typeof r2.b?.totalPlugins === 'number');
+
+  const r3 = await req('GET', '/api/plugins/events', null, ceoToken);
+  ok('GET /api/plugins/events → 200', r3.s === 200);
+  ok('Has events array', Array.isArray(r3.b?.events));
+}
+
+async function testHealthDetailed() {
+  console.log('\n🔷 Health Detailed + Metrics');
+  const r1 = await req('GET', '/health/detailed');
+  ok('GET /health/detailed → 200', r1.s === 200);
+  ok('Has system info', typeof r1.b?.system === 'object');
+
+  const r2 = await req('GET', '/health/metrics');
+  ok('GET /health/metrics → 200', r2.s === 200);
+}
+
+async function testMessageTrace() {
+  console.log('\n🔷 Message Trace');
+  const msgId = `trace-msg-${Date.now()}`;
+  await req('POST', '/api/chat/send', {
+    id: msgId, from: 'alice', to: 'bob',
+    content: 'Trace test', type: 'text',
+    ts: Date.now(), signature: '', encrypted: false,
+  }, aliceToken);
+  const r = await req('GET', `/api/chat/trace/${msgId}`, null, aliceToken);
+  ok('GET /api/chat/trace/:id → 200 or 404', r.s === 200 || r.s === 404);
+}
+
+async function testBadLogin() {
+  console.log('\n🔷 Bad Login');
+  const r = await req('POST', '/api/auth/login', {
+    handle: 'nonexistent_xyz', password: 'wrong',
+  });
+  ok('Bad login → 401 or 400', r.s === 401 || r.s === 400);
+}
+
 // ─── Plan Estimate Tests ────────────────────────────────────────
 
 async function testPlanEstimate() {
@@ -983,6 +1032,10 @@ async function run() {
     await testLLMGateway();
     await testHumans();
     await testHumanReview();
+    await testPluginAPI();
+    await testHealthDetailed();
+    await testMessageTrace();
+    await testBadLogin();
     await testPlanEstimate();
   } catch (err) {
     console.log(`\n💥 Fatal: ${err.message}`);
