@@ -16,13 +16,25 @@ export interface ChatGroup {
 }
 
 export type ChatMessageType =
-  | 'human'
-  | 'task'
-  | 'ask'
-  | 'broadcast'
-  | 'reply'
-  | 'ack'
-  | 'plan-result'
+  | 'human'        // pure human conversation
+  | 'task'         // triggers Agent execution
+  | 'ask'          // Agent needs human confirmation
+  | 'broadcast'    // Hub-wide announcement
+  | 'reply'        // reply to a message
+  | 'ack'          // read acknowledgement
+  | 'plan-result'  // task planning result
+  // Extended types (Sprint 4)
+  | 'card'         // interactive card (product, approval, vote, form)
+  | 'transaction'  // payment/transfer notification
+  | 'media'        // image, video, audio, file
+  | 'reminder'     // scheduled reminder
+  | 'calendar'     // calendar event
+  | 'approval'     // approval request/response
+  | 'iot'          // IoT device command/status
+  | 'health'       // health data update
+  | 'location'     // location sharing
+  | 'system'       // system notification
+  | `x-${string}`  // custom extension (plugins can define their own)
 
 export interface ChatMessage {
   id: string
