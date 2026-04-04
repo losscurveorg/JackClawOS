@@ -24,6 +24,18 @@ import type {
   SocialThread,
 } from '@jackclaw/protocol'
 import { pushToNodeWs } from './chat'
+import { pushService } from '../push-service'
+
+// Lazy import to avoid circular dependencies at module load time
+function getFedMgr() {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { getFederationManager } = require('../federation') as typeof import('../federation')
+    return getFederationManager()
+  } catch {
+    return null
+  }
+}
 
 const router = Router()
 
@@ -99,12 +111,33 @@ function deliverSocialMsg(msg: SocialMessage): void {
     q.push(msg)
     offlineQueue[nodeId] = q
     saveJSON(SOCIAL_QUEUE_FILE, offlineQueue)
+    // Also notify via Web Push if node has a browser subscription
+    setImmediate(() => {
+      void pushService.push(nodeId, {
+        title: `Social message from ${msg.fromAgent}`,
+        body: msg.content.slice(0, 120),
+        data: { type: 'social', messageId: msg.id, from: msg.fromAgent },
+      })
+    })
   }
+}
+
+/**
+ * Deliver a SocialMessage that arrived from a remote hub via federation.
+ * Exported so routes/federation.ts can call it without circular imports at load time.
+ */
+export function deliverFederatedMessage(msg: SocialMessage): void {
+  // Persist it in local message store first
+  messages.push(msg)
+  saveJSON(SOCIAL_MESSAGES_FILE, messages)
+  // Then attempt local WebSocket delivery / offline queue
+  deliverSocialMsg(msg)
+  console.log(`[social/fed] Federated delivery: ${msg.fromAgent} → ${msg.toAgent}`)
 }
 
 // ─── POST /send ───────────────────────────────────────────────────────────────
 
-router.post('/send', (req: Request, res: Response) => {
+router.post('/send', async (req: Request, res: Response) => {
   const body = req.body as Partial<SocialMessage>
 
   if (!body.fromHuman || !body.fromAgent || !body.toAgent || !body.content) {
@@ -139,6 +172,32 @@ router.post('/send', (req: Request, res: Response) => {
     ts: Date.now(),
     encrypted: body.encrypted ?? false,
     signature: body.signature ?? '',
+  }
+
+  // Check if the target agent is local
+  const localNodeId = lookupNodeId(msg.toAgent)
+
+  if (!localNodeId) {
+    // ── Federation routing ──────────────────────────────────────────────────
+    const fedMgr = getFedMgr()
+    if (fedMgr) {
+      try {
+        const result = await fedMgr.routeToRemoteHub(msg.toAgent, msg)
+        // Also persist locally so sender has a record
+        messages.push(msg)
+        saveJSON(SOCIAL_MESSAGES_FILE, messages)
+        console.log(`[social] ${msg.fromAgent} → ${msg.toAgent} (federated): ${msg.content.slice(0, 50)}`)
+        return res.status(201).json({ status: 'ok', messageId: msg.id, thread, routed: 'federation', federationResult: result })
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err)
+        if (errMsg.startsWith('agent_not_found')) {
+          return res.status(404).json({ error: 'agent_not_found', message: `${msg.toAgent} is not registered on this hub or any federated hub` })
+        }
+        console.error('[social] Federation routing error:', errMsg)
+        return res.status(502).json({ error: 'federation_error', message: errMsg })
+      }
+    }
+    // No federation manager — fall through to offline queue
   }
 
   messages.push(msg)
