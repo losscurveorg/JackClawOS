@@ -26,7 +26,7 @@ To: crypt@bis.doc.gov, enc@nsa.gov
 Subject: TSU Notification – Section 742.15(b) – JackClawOS Open Source Encryption
 
 SUBMISSION TYPE: TSU NOTIFICATION
-SUBMITTED BY: Mack Ding
+SUBMITTED BY: JackClaw
 SUBMITTED FOR: JackClawOS (Open Source Project)
 
 This is a notification pursuant to Section 742.15(b) of the Export 
@@ -61,7 +61,7 @@ and EAR § 740.13(e).
 
 Respectfully,
 
-Mack Ding
+JackClaw
 JackClawOS Project Maintainer
 GitHub: https://github.com/DevJackKong
 Email: JackClaw@jackclaw.ai

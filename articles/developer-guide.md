@@ -1,6 +1,6 @@
 # OpenClaw的未来JackClaw — 开发者指南：用 TypeScript 构建你的 AI 公司
 
-> 作者：Mack Ding  |  2026 年 4 月  |  GitHub: github.com/DevJackKong/JackClawOS
+> 作者：JackClaw  |  2026 年 4 月  |  GitHub: github.com/DevJackKong/JackClawOS
 
 ---
 
@@ -367,4 +367,4 @@ jackclaw start
 
 *JackClaw — 让 AI 员工像真人一样协作*
 
-*Built by Mack Ding · 2026*
+*Built by JackClaw · 2026*
