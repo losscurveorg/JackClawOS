@@ -47,9 +47,27 @@ class UserStore {
     save(store) {
         saveJSON(USERS_FILE, store);
     }
-    /** Normalize @handle: lowercase, strip leading @, keep [a-z0-9_-] */
+    /** Normalize @handle: lowercase, strip leading @, resolve federated forms.
+     *  @jack → jack
+     *  @jack.jackclaw → jack
+     *  jack@jackclaw.ai → jack
+     */
     normalizeHandle(raw) {
-        return raw.toLowerCase().replace(/^@/, '').replace(/[^a-z0-9_-]/g, '');
+        const trimmed = raw.trim().toLowerCase();
+        // Federated email form: jack@jackclaw.ai → jack
+        if (trimmed.includes('@') && trimmed.indexOf('@') > 0) {
+            const stripped = trimmed.startsWith('@') ? trimmed.slice(1) : trimmed;
+            if (stripped.includes('@')) {
+                return stripped.slice(0, stripped.indexOf('@')).replace(/[^a-z0-9_-]/g, '');
+            }
+        }
+        // Dot-separated form: jack.jackclaw → jack (strip domain suffix)
+        const stripped = trimmed.startsWith('@') ? trimmed.slice(1) : trimmed;
+        const dotParts = stripped.split('.');
+        if (dotParts.length >= 2 && dotParts[dotParts.length - 1] === 'jackclaw') {
+            return dotParts[0].replace(/[^a-z0-9_-]/g, '');
+        }
+        return stripped.replace(/[^a-z0-9_-]/g, '');
     }
     // ─── Registration ──────────────────────────────────────────────────────────
     async register(handle, password, displayName, email) {

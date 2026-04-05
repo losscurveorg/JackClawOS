@@ -14,7 +14,11 @@ export type PublicUser = Omit<UserRecord, 'passwordHash' | 'passwordSalt'>;
 export declare class UserStore {
     private load;
     private save;
-    /** Normalize @handle: lowercase, strip leading @, keep [a-z0-9_-] */
+    /** Normalize @handle: lowercase, strip leading @, resolve federated forms.
+     *  @jack → jack
+     *  @jack.jackclaw → jack
+     *  jack@jackclaw.ai → jack
+     */
     normalizeHandle(raw: string): string;
     register(handle: string, password: string, displayName: string, email?: string): Promise<{
         token: string;

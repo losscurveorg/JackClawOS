@@ -310,9 +310,10 @@ function buildProfileHtml(
 </html>`
 }
 
-// GET /@:handle
-router.get('/@:handle', (req: Request, res: Response) => {
-  const handle = userStore.normalizeHandle(req.params.handle ?? '')
+// GET /@:handle — supports @jack, @jack.jackclaw, @jack@jackclaw.ai
+router.get(/^\/@(.+)$/, (req: Request, res: Response) => {
+  const rawHandle = req.params[0] ?? ''
+  const handle = userStore.normalizeHandle(rawHandle)
   if (!handle) {
     res.status(400).send('<h1>Invalid handle</h1>')
     return
