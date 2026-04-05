@@ -23,6 +23,7 @@ exports.attachChatWss = attachChatWss;
 const express_1 = require("express");
 const human_registry_1 = require("../store/human-registry");
 const chat_worker_1 = require("../chat-worker");
+const offline_queue_1 = require("../store/offline-queue");
 const router = (0, express_1.Router)();
 exports.chatRouter = router;
 // ─── REST 路由 ────────────────────────────────────────────────────────────────
@@ -38,14 +39,35 @@ router.post('/send', (req, res) => {
     res.json({ status: 'ok', messageId: msg.id });
 });
 // 拉取离线消息（Node 上线时调用）
+// 合并 chat inbox + social offlineQueue，支持 nodeId 或 handle 查询
 router.get('/inbox', (req, res) => {
     const nodeId = req.query.nodeId;
     if (!nodeId) {
         res.status(400).json({ error: 'nodeId required' });
         return;
     }
-    const msgs = chat_worker_1.chatWorker.store.drainInbox(nodeId);
-    res.json({ messages: msgs, count: msgs.length });
+    // 1. Chat store inbox — 查 nodeId 本身 + 可能的 handle 变体
+    const chatMsgs = [
+        ...chat_worker_1.chatWorker.store.drainInbox(nodeId),
+        ...chat_worker_1.chatWorker.store.drainInbox(`user-${nodeId}`),
+    ];
+    // 2. Social offlineQueue — 查所有 handle 变体
+    const handleVariants = [`@${nodeId}`, `@${nodeId}.jackclaw`];
+    // 如果 nodeId 以 user- 开头，也查原始 handle
+    if (nodeId.startsWith('user-')) {
+        const bare = nodeId.slice(5);
+        handleVariants.push(`@${bare}`, `@${bare}.jackclaw`);
+        chatMsgs.push(...chat_worker_1.chatWorker.store.drainInbox(bare));
+    }
+    const socialMsgs = [];
+    for (const h of handleVariants) {
+        for (const envelope of offline_queue_1.offlineQueue.dequeue(h)) {
+            if (envelope.data)
+                socialMsgs.push(envelope.data);
+        }
+    }
+    const allMsgs = [...chatMsgs, ...socialMsgs];
+    res.json({ messages: allMsgs, count: allMsgs.length });
 });
 // 会话列表
 router.get('/threads', (req, res) => {

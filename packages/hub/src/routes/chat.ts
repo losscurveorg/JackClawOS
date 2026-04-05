@@ -20,6 +20,7 @@ import type { WebSocketServer } from 'ws'
 import type { ChatMessage } from '../store/chat'
 import { registerHuman, listHumans } from '../store/human-registry'
 import { chatWorker } from '../chat-worker'
+import { offlineQueue } from '../store/offline-queue'
 
 const router = Router()
 
@@ -41,14 +42,38 @@ router.post('/send', (req: Request, res: Response) => {
 })
 
 // 拉取离线消息（Node 上线时调用）
+// 合并 chat inbox + social offlineQueue，支持 nodeId 或 handle 查询
 router.get('/inbox', (req: Request, res: Response) => {
   const nodeId = req.query.nodeId as string
   if (!nodeId) {
     res.status(400).json({ error: 'nodeId required' })
     return
   }
-  const msgs = chatWorker.store.drainInbox(nodeId)
-  res.json({ messages: msgs, count: msgs.length })
+
+  // 1. Chat store inbox — 查 nodeId 本身 + 可能的 handle 变体
+  const chatMsgs = [
+    ...chatWorker.store.drainInbox(nodeId),
+    ...chatWorker.store.drainInbox(`user-${nodeId}`),
+  ]
+
+  // 2. Social offlineQueue — 查所有 handle 变体
+  const handleVariants = [`@${nodeId}`, `@${nodeId}.jackclaw`]
+  // 如果 nodeId 以 user- 开头，也查原始 handle
+  if (nodeId.startsWith('user-')) {
+    const bare = nodeId.slice(5)
+    handleVariants.push(`@${bare}`, `@${bare}.jackclaw`)
+    chatMsgs.push(...chatWorker.store.drainInbox(bare))
+  }
+
+  const socialMsgs: any[] = []
+  for (const h of handleVariants) {
+    for (const envelope of offlineQueue.dequeue(h)) {
+      if (envelope.data) socialMsgs.push(envelope.data)
+    }
+  }
+
+  const allMsgs = [...chatMsgs, ...socialMsgs]
+  res.json({ messages: allMsgs, count: allMsgs.length })
 })
 
 // 会话列表

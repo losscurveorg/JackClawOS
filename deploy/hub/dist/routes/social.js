@@ -115,9 +115,12 @@ function getOrCreateThread(a, b) {
  */
 function deliverSocialMsg(msg) {
     const { nodeId, wsConnected } = presence_1.presenceManager.resolveHandle(msg.toAgent);
+    // Normalize the target handle for consistent queue keying
+    const parsed = (0, protocol_1.parseHandle)(msg.toAgent);
+    const queueHandle = parsed ? `@${parsed.local}` : msg.toAgent;
     if (!nodeId) {
         // Agent not registered — queue by handle; will be drained when they register+connect
-        offline_queue_1.offlineQueue.enqueue(msg.toAgent, { event: 'social', data: msg });
+        offline_queue_1.offlineQueue.enqueue(queueHandle, { event: 'social', data: msg });
         return;
     }
     if (wsConnected) {
@@ -126,7 +129,7 @@ function deliverSocialMsg(msg) {
             return;
     }
     // Node offline (or WS push failed) — queue by handle for reliable delivery
-    offline_queue_1.offlineQueue.enqueue(msg.toAgent, { event: 'social', data: msg });
+    offline_queue_1.offlineQueue.enqueue(queueHandle, { event: 'social', data: msg });
     // Best-effort Web Push notification
     setImmediate(() => {
         void push_service_1.pushService.push(nodeId, {

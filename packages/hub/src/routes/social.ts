@@ -32,7 +32,7 @@ import { quotaManager } from '../quota'
 import { presenceManager } from '../presence'
 import { offlineQueue } from '../store/offline-queue'
 import { directoryStore } from '../store/directory'
-import { normalizeAgentAddress } from '@jackclaw/protocol'
+import { normalizeAgentAddress, parseHandle } from '@jackclaw/protocol'
 
 // Lazy import to avoid circular dependencies at module load time
 function getFedMgr() {
@@ -131,9 +131,13 @@ function getOrCreateThread(a: string, b: string): string {
 function deliverSocialMsg(msg: SocialMessage): void {
   const { nodeId, wsConnected } = presenceManager.resolveHandle(msg.toAgent)
 
+  // Normalize the target handle for consistent queue keying
+  const parsed = parseHandle(msg.toAgent)
+  const queueHandle = parsed ? `@${parsed.local}` : msg.toAgent
+
   if (!nodeId) {
     // Agent not registered — queue by handle; will be drained when they register+connect
-    offlineQueue.enqueue(msg.toAgent, { event: 'social', data: msg })
+    offlineQueue.enqueue(queueHandle, { event: 'social', data: msg })
     return
   }
 
@@ -143,7 +147,7 @@ function deliverSocialMsg(msg: SocialMessage): void {
   }
 
   // Node offline (or WS push failed) — queue by handle for reliable delivery
-  offlineQueue.enqueue(msg.toAgent, { event: 'social', data: msg })
+  offlineQueue.enqueue(queueHandle, { event: 'social', data: msg })
 
   // Best-effort Web Push notification
   setImmediate(() => {
