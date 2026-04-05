@@ -28,6 +28,8 @@ export interface AutoReplyOptions {
   llmGateway?: LLMGateway
   /** 可选：OpenClaw Gateway 兼容接口 URL（/v1/chat/completions） */
   openclawGatewayUrl?: string
+  /** 可选：API Key，用于 Authorization: Bearer 头（OpenAI / Anthropic road2all 等） */
+  apiKey?: string
   /** 对话历史保留条数，默认 20 */
   historyLimit?: number
 }
@@ -58,6 +60,7 @@ export class AutoReplyHandler {
   private readonly model: string
   private readonly llmGateway?: LLMGateway
   private readonly openclawGatewayUrl?: string
+  private readonly apiKey?: string
   private readonly historyLimit: number
 
   constructor(opts: AutoReplyOptions) {
@@ -67,6 +70,7 @@ export class AutoReplyHandler {
     this.model = opts.model ?? DEFAULT_MODEL
     this.llmGateway = opts.llmGateway
     this.openclawGatewayUrl = opts.openclawGatewayUrl
+    this.apiKey = opts.apiKey
     this.historyLimit = opts.historyLimit ?? DEFAULT_HISTORY_LIMIT
   }
 
@@ -186,9 +190,12 @@ export class AutoReplyHandler {
       ...this.history,
     ]
 
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (this.apiKey) headers['Authorization'] = `Bearer ${this.apiKey}`
+
     const res = await fetch(`${this.openclawGatewayUrl!.replace(/\/$/, '')}/v1/chat/completions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ model: this.model, messages }),
     })
 

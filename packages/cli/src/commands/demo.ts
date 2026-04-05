@@ -9,6 +9,8 @@ import chalk from 'chalk';
 import http from 'http';
 import { spawn, ChildProcess } from 'child_process';
 import net from 'net';
+import WebSocket from 'ws';
+import { AutoReplyHandler } from '@jackclaw/node';
 
 const DEMO_HUB_PORT = 3100;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));

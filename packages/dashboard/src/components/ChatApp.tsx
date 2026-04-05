@@ -206,8 +206,7 @@ export const ChatApp: React.FC<Props> = ({ token, userHandle, displayName }) => 
               }}
             >+</button>
             <div className={`ws-status ws-${wsStatus}`} title={`WebSocket: ${wsStatus}`}>
-              <span className="ws-dot" />
-              {wsStatus === 'connected' ? '实时' : wsStatus === 'connecting' ? '…' : '离线'}
+              {wsStatus === 'connected' ? '🟢 已连接' : wsStatus === 'connecting' ? '🟡 连接中...' : '🔴 断开'}
             </div>
           </div>
         </div>
