@@ -9,6 +9,7 @@
 import fs from 'fs'
 import path from 'path'
 import type { AgentProfile } from '@jackclaw/protocol'
+import { normalizeAgentAddress, parseHandle } from '@jackclaw/protocol'
 
 const HUB_DIR = path.join(process.env.HOME || '~', '.jackclaw', 'hub')
 const DIRECTORY_FILE = path.join(HUB_DIR, 'directory.json')
@@ -38,10 +39,11 @@ class DirectoryStore {
     this._persist()
   }
 
-  /** Get the nodeId for a handle. Returns null if not registered. */
+  /** Get the nodeId for a handle. Returns null if not registered.
+   *  Accepts any address form: @jack, @jack.jackclaw, jack@jackclaw.ai, etc.
+   */
   getNodeIdForHandle(handle: string): string | null {
-    const key = handle.startsWith('@') ? handle : `@${handle}`
-    return this.entries[key]?.nodeId ?? null
+    return this._resolve(handle)?.nodeId ?? null
   }
 
   /** Get all handles associated with a nodeId. */
@@ -67,10 +69,11 @@ class DirectoryStore {
     this._persist()
   }
 
-  /** Get full profile for a handle. */
+  /** Get full profile for a handle.
+   *  Accepts any address form: @jack, @jack.jackclaw, jack@jackclaw.ai, etc.
+   */
   getProfile(handle: string): AgentProfile | null {
-    const key = handle.startsWith('@') ? handle : `@${handle}`
-    return this.entries[key] ?? null
+    return this._resolve(handle)
   }
 
   /** Update lastSeen timestamp for a handle. */
@@ -94,6 +97,26 @@ class DirectoryStore {
 
   private _persist(): void {
     saveJSON(DIRECTORY_FILE, this.entries)
+  }
+
+  /** Resolve any handle variant to a stored profile.
+   *  Tries: canonical (@jack.jackclaw), then short form (@jack).
+   *  This ensures backward-compat with entries registered before alias support.
+   */
+  private _resolve(handle: string): AgentProfile | null {
+    const canonical = normalizeAgentAddress(handle)   // e.g. "@jack.jackclaw"
+    if (this.entries[canonical]) return this.entries[canonical]
+
+    // Fallback: short form  @jack
+    const parsed = parseHandle(handle)
+    if (parsed) {
+      const short = `@${parsed.local}`
+      if (this.entries[short]) return this.entries[short]
+    }
+
+    // Last resort: bare key with @ prefix (handles non-standard forms)
+    const bare = handle.startsWith('@') ? handle : `@${handle}`
+    return this.entries[bare] ?? null
   }
 }
 

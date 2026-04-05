@@ -25,8 +25,21 @@ export interface AgentHandle {
 }
 
 export function parseHandle(raw: string): AgentHandle | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+
   // Strip leading @
-  const stripped = raw.startsWith('@') ? raw.slice(1) : raw
+  const stripped = trimmed.startsWith('@') ? trimmed.slice(1) : trimmed
+
+  // Email-style federated address: jack@jackclaw.ai  or  @jack@jackclaw.ai (after stripping leading @)
+  if (stripped.includes('@')) {
+    const atIdx = stripped.indexOf('@')
+    const local = stripped.slice(0, atIdx)
+    const emailDomain = stripped.slice(atIdx + 1)  // e.g. "jackclaw.ai"
+    if (!local) return null
+    return { local, domain: emailDomain, full: `@${local}.jackclaw` }
+  }
+
   const parts = stripped.split('.')
 
   if (parts.length === 1) {
@@ -49,6 +62,16 @@ export function parseHandle(raw: string): AgentHandle | null {
   }
 
   return null
+}
+
+/** Return the canonical handle form for any input variant.
+ *  @jack / @jack.jackclaw / @jack@jackclaw.ai / jack@jackclaw.ai → "@jack.jackclaw"
+ *  Returns the raw input unchanged if it cannot be parsed.
+ */
+export function normalizeAgentAddress(raw: string): string {
+  const parsed = parseHandle(raw)
+  if (!parsed) return raw.trim()
+  return parsed.full
 }
 
 export function formatHandle(local: string, org?: string): string {

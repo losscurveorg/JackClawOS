@@ -32,6 +32,7 @@ import { quotaManager } from '../quota'
 import { presenceManager } from '../presence'
 import { offlineQueue } from '../store/offline-queue'
 import { directoryStore } from '../store/directory'
+import { normalizeAgentAddress } from '@jackclaw/protocol'
 
 // Lazy import to avoid circular dependencies at module load time
 function getFedMgr() {
@@ -173,7 +174,8 @@ router.post('/send', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'missing_fields', required: ['fromHuman', 'fromAgent', 'toAgent', 'content'] })
   }
 
-  const targetProfile = profiles[body.toAgent]
+  // Resolve target profile using both original and canonical forms
+  const targetProfile = profiles[body.toAgent] ?? profiles[normalizeAgentAddress(body.toAgent)]
   if (targetProfile?.contactPolicy === 'closed') {
     return res.status(403).json({ error: 'contact_policy_closed', message: `${body.toAgent} 不接受外来消息` })
   }
@@ -252,8 +254,9 @@ router.post('/contact', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'missing_fields', required: ['fromAgent', 'toAgent', 'message'] })
   }
 
-  const myContacts = contacts[body.fromAgent] ?? []
-  if (myContacts.includes(body.toAgent)) {
+  const myContacts = contacts[body.fromAgent] ?? contacts[normalizeAgentAddress(body.fromAgent)] ?? []
+  const toKey = body.toAgent
+  if (myContacts.includes(toKey) || myContacts.includes(normalizeAgentAddress(toKey))) {
     return res.status(409).json({ error: 'already_contacts', message: '你们已经是联系人' })
   }
 
