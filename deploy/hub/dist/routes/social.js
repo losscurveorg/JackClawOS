@@ -29,6 +29,7 @@ const quota_1 = require("../quota");
 const presence_1 = require("../presence");
 const offline_queue_1 = require("../store/offline-queue");
 const directory_1 = require("../store/directory");
+const protocol_1 = require("@jackclaw/protocol");
 // Lazy import to avoid circular dependencies at module load time
 function getFedMgr() {
     try {
@@ -153,7 +154,8 @@ router.post('/send', async (req, res) => {
     if (!body.fromHuman || !body.fromAgent || !body.toAgent || !body.content) {
         return res.status(400).json({ error: 'missing_fields', required: ['fromHuman', 'fromAgent', 'toAgent', 'content'] });
     }
-    const targetProfile = profiles[body.toAgent];
+    // Resolve target profile using both original and canonical forms
+    const targetProfile = profiles[body.toAgent] ?? profiles[(0, protocol_1.normalizeAgentAddress)(body.toAgent)];
     if (targetProfile?.contactPolicy === 'closed') {
         return res.status(403).json({ error: 'contact_policy_closed', message: `${body.toAgent} 不接受外来消息` });
     }
@@ -227,8 +229,9 @@ router.post('/contact', (req, res) => {
     if (!body.fromAgent || !body.toAgent || !body.message) {
         return res.status(400).json({ error: 'missing_fields', required: ['fromAgent', 'toAgent', 'message'] });
     }
-    const myContacts = contacts[body.fromAgent] ?? [];
-    if (myContacts.includes(body.toAgent)) {
+    const myContacts = contacts[body.fromAgent] ?? contacts[(0, protocol_1.normalizeAgentAddress)(body.fromAgent)] ?? [];
+    const toKey = body.toAgent;
+    if (myContacts.includes(toKey) || myContacts.includes((0, protocol_1.normalizeAgentAddress)(toKey))) {
         return res.status(409).json({ error: 'already_contacts', message: '你们已经是联系人' });
     }
     const req2 = {

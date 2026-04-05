@@ -111,13 +111,15 @@ router.post('/register', asyncRoute(async (req, res) => {
     if (config.requireInvite && inviteCode) {
         consumeInvite(String(inviteCode), normalizedHandle);
     }
-    // Auto-register in directory so social messaging works immediately
-    const fullHandle = `@${normalizedHandle}`;
-    const existing = directory_1.directoryStore.getProfile(fullHandle);
+    // Auto-register in directory so social messaging works immediately.
+    // Register both @jack (short) and @jack.jackclaw (canonical) as aliases for the same nodeId.
+    const shortHandle = `@${normalizedHandle}`;
+    const longHandle = `@${normalizedHandle}.jackclaw`;
+    const nodeId = `user-${normalizedHandle}`;
+    const existing = directory_1.directoryStore.getProfile(shortHandle) ?? directory_1.directoryStore.getProfile(longHandle);
     if (!existing) {
-        directory_1.directoryStore.registerHandle(fullHandle, {
-            nodeId: `user-${normalizedHandle}`,
-            handle: fullHandle,
+        const profileBase = {
+            nodeId,
             displayName: String(displayName),
             role: 'member',
             publicKey: '',
@@ -126,9 +128,11 @@ router.post('/register', asyncRoute(async (req, res) => {
             visibility: 'public',
             createdAt: Date.now(),
             lastSeen: Date.now(),
-        });
+        };
+        directory_1.directoryStore.registerHandle(shortHandle, { ...profileBase, handle: shortHandle });
+        directory_1.directoryStore.registerHandle(longHandle, { ...profileBase, handle: longHandle });
         // Register in presence so resolveHandle works
-        presence_1.presenceManager.setOnline(`user-${normalizedHandle}`);
+        presence_1.presenceManager.setOnline(nodeId);
     }
     res.status(201).json(result);
 }));

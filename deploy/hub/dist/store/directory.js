@@ -13,6 +13,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.directoryStore = void 0;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
+const protocol_1 = require("@jackclaw/protocol");
 const HUB_DIR = path_1.default.join(process.env.HOME || '~', '.jackclaw', 'hub');
 const DIRECTORY_FILE = path_1.default.join(HUB_DIR, 'directory.json');
 function loadJSON(file, defaultVal) {
@@ -37,10 +38,11 @@ class DirectoryStore {
         this.entries[handle] = { ...profile, lastSeen: Date.now() };
         this._persist();
     }
-    /** Get the nodeId for a handle. Returns null if not registered. */
+    /** Get the nodeId for a handle. Returns null if not registered.
+     *  Accepts any address form: @jack, @jack.jackclaw, jack@jackclaw.ai, etc.
+     */
     getNodeIdForHandle(handle) {
-        const key = handle.startsWith('@') ? handle : `@${handle}`;
-        return this.entries[key]?.nodeId ?? null;
+        return this._resolve(handle)?.nodeId ?? null;
     }
     /** Get all handles associated with a nodeId. */
     getHandlesForNode(nodeId) {
@@ -62,10 +64,11 @@ class DirectoryStore {
         delete this.entries[key];
         this._persist();
     }
-    /** Get full profile for a handle. */
+    /** Get full profile for a handle.
+     *  Accepts any address form: @jack, @jack.jackclaw, jack@jackclaw.ai, etc.
+     */
     getProfile(handle) {
-        const key = handle.startsWith('@') ? handle : `@${handle}`;
-        return this.entries[key] ?? null;
+        return this._resolve(handle);
     }
     /** Update lastSeen timestamp for a handle. */
     touchHandle(handle) {
@@ -85,6 +88,25 @@ class DirectoryStore {
     }
     _persist() {
         saveJSON(DIRECTORY_FILE, this.entries);
+    }
+    /** Resolve any handle variant to a stored profile.
+     *  Tries: canonical (@jack.jackclaw), then short form (@jack).
+     *  This ensures backward-compat with entries registered before alias support.
+     */
+    _resolve(handle) {
+        const canonical = (0, protocol_1.normalizeAgentAddress)(handle); // e.g. "@jack.jackclaw"
+        if (this.entries[canonical])
+            return this.entries[canonical];
+        // Fallback: short form  @jack
+        const parsed = (0, protocol_1.parseHandle)(handle);
+        if (parsed) {
+            const short = `@${parsed.local}`;
+            if (this.entries[short])
+                return this.entries[short];
+        }
+        // Last resort: bare key with @ prefix (handles non-standard forms)
+        const bare = handle.startsWith('@') ? handle : `@${handle}`;
+        return this.entries[bare] ?? null;
     }
 }
 exports.directoryStore = new DirectoryStore();

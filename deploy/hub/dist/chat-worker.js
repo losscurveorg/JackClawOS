@@ -28,6 +28,7 @@ const push_service_1 = require("./push-service");
 const presence_1 = require("./presence");
 const directory_1 = require("./store/directory");
 const offline_queue_1 = require("./store/offline-queue");
+const protocol_1 = require("@jackclaw/protocol");
 // ─── Deduplication ────────────────────────────────────────────────────────────
 const DEDUP_WINDOW_MS = 60_000; // 60s sliding window
 const seenMessages = new Map(); // messageId → timestamp
@@ -135,9 +136,24 @@ class ChatWorker {
         });
         const toId = Array.isArray(msg.to) ? msg.to[0] : msg.to;
         const group = this.store.getGroup(toId);
-        const targets = group
+        const rawTargets = group
             ? group.members.filter(m => m !== msg.from)
             : (Array.isArray(msg.to) ? msg.to : [msg.to]);
+        // Normalize targets: resolve any handle variant (@jack.jackclaw, jack@jackclaw.ai) to the local identity
+        const targets = rawTargets.map(t => {
+            // Try to find the real nodeId via directory → use that as target
+            const nodeId = directory_1.directoryStore.getNodeIdForHandle(t);
+            if (nodeId) {
+                // Reverse-lookup: find the short handle registered under this nodeId
+                const handles = directory_1.directoryStore.getHandlesForNode(nodeId);
+                // Prefer the shortest handle (e.g. @jack over @jack.jackclaw)
+                const shortest = handles.sort((a, b) => a.length - b.length)[0];
+                return shortest?.startsWith('@') ? shortest.slice(1) : (shortest ?? t);
+            }
+            // Fallback: parse handle to extract local part
+            const parsed = (0, protocol_1.parseHandle)(t);
+            return parsed?.local ?? t;
+        });
         const priority = getPriority(msg);
         for (const target of targets) {
             const payload = group

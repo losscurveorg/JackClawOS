@@ -23,6 +23,7 @@ import { presenceManager } from './presence'
 import { directoryStore } from './store/directory'
 import { offlineQueue } from './store/offline-queue'
 import type { MessageStatus, StatusTransition } from '@jackclaw/protocol'
+import { parseHandle } from '@jackclaw/protocol'
 
 // ─── Deduplication ────────────────────────────────────────────────────────────
 
@@ -177,9 +178,25 @@ export class ChatWorker {
 
     const toId = Array.isArray(msg.to) ? msg.to[0] : msg.to
     const group = this.store.getGroup(toId)
-    const targets = group
+    const rawTargets = group
       ? group.members.filter(m => m !== msg.from)
       : (Array.isArray(msg.to) ? msg.to : [msg.to])
+
+    // Normalize targets: resolve any handle variant (@jack.jackclaw, jack@jackclaw.ai) to the local identity
+    const targets = rawTargets.map(t => {
+      // Try to find the real nodeId via directory → use that as target
+      const nodeId = directoryStore.getNodeIdForHandle(t)
+      if (nodeId) {
+        // Reverse-lookup: find the short handle registered under this nodeId
+        const handles = directoryStore.getHandlesForNode(nodeId)
+        // Prefer the shortest handle (e.g. @jack over @jack.jackclaw)
+        const shortest = handles.sort((a, b) => a.length - b.length)[0]
+        return shortest?.startsWith('@') ? shortest.slice(1) : (shortest ?? t)
+      }
+      // Fallback: parse handle to extract local part
+      const parsed = parseHandle(t)
+      return parsed?.local ?? t
+    })
 
     const priority = getPriority(msg)
 
