@@ -22,8 +22,8 @@ const httpServer = http.createServer(app)
 // ClawChat WebSocket
 attachChatWss(httpServer)
 
-httpServer.listen(PORT, () => {
-  console.log(`[hub] JackClaw Hub listening on http://localhost:${PORT}`)
+httpServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`[hub] JackClaw Hub listening on http://0.0.0.0:${PORT}`)
   console.log(`[hub] Dashboard: http://localhost:${PORT}`)
   console.log(`[hub] PWA App:   http://localhost:${PORT}/app/`)
   console.log(`[hub] Routes:`)

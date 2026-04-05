@@ -20,11 +20,14 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "publish:dry": "node scripts/publish.js",
     "publish:live": "node scripts/publish.js --live",
-    "publish:beta": "node scripts/publish.js --live --tag=beta"
+    "publish:beta": "node scripts/publish.js --live --tag=beta",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs"
   },
   "devDependencies": {
     "concurrently": "^8.2.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitepress": "^1.6.4"
   },
   "engines": {
     "node": ">=20.0.0",

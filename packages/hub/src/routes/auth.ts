@@ -16,6 +16,8 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { userStore } from '../store/users'
+import { directoryStore } from '../store/directory'
+import { presenceManager } from '../presence'
 
 const router = Router()
 
@@ -141,6 +143,26 @@ router.post('/register', asyncRoute(async (req, res) => {
   // Consume the invite only after successful registration
   if (config.requireInvite && inviteCode) {
     consumeInvite(String(inviteCode), normalizedHandle)
+  }
+
+  // Auto-register in directory so social messaging works immediately
+  const fullHandle = `@${normalizedHandle}`
+  const existing = directoryStore.getProfile(fullHandle)
+  if (!existing) {
+    directoryStore.registerHandle(fullHandle, {
+      nodeId:       `user-${normalizedHandle}`,
+      handle:       fullHandle,
+      displayName:  String(displayName),
+      role:         'member',
+      publicKey:    '',
+      hubUrl:       `http://localhost:${process.env.HUB_PORT ?? process.env.PORT ?? 3100}`,
+      capabilities: [],
+      visibility:   'public' as any,
+      createdAt:    Date.now(),
+      lastSeen:     Date.now(),
+    })
+    // Register in presence so resolveHandle works
+    presenceManager.setOnline(`user-${normalizedHandle}`)
   }
 
   res.status(201).json(result)
