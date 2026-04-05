@@ -33,7 +33,15 @@ import {
   formatSummary,
   hubHealthCheck,
   sendChatMessage,
+  updateChatProfile,
+  createChatGroup,
+  fetchChatGroups,
+  sendGroupMessage,
+  formatChatGroups,
+  fetchMyProfile,
+  updateMyProfile,
 } from './bridge.js'
+import { getClawChatAuth } from './clawchat-auth.js'
 
 /** Minimal reply payload: { text } */
 export type CommandReply = { text: string }
@@ -63,9 +71,11 @@ async function handleReport(_ctx: PluginCommandContext): Promise<CommandReply> {
 function handleHelp(_ctx: PluginCommandContext): CommandReply {
   return replyText(
     '**JackClaw 插件指令**\n\n' +
-    '/jackclaw status  — 查看所有节点在线情况\n' +
-    '/jackclaw report  — 查看今日团队汇报摘要\n' +
-    '/jackclaw help    — 显示此帮助\n\n' +
+    '/jackclaw status          — 查看所有节点在线情况\n' +
+    '/jackclaw report          — 查看今日团队汇报摘要\n' +
+    '/jackclaw profile         — 查看 ClawChat 账号信息\n' +
+    '/jackclaw profile --name "名字" — 修改显示名\n' +
+    '/jackclaw help            — 显示此帮助\n\n' +
     '**自然语言触发词**\n' +
     '「团队汇报」「日报」→ 汇报摘要\n' +
     '「节点状态」「在线情况」→ 节点状态',
@@ -74,7 +84,8 @@ function handleHelp(_ctx: PluginCommandContext): CommandReply {
 
 /** Main dispatcher for /jackclaw <subcommand> */
 async function jackclawCommandHandler(ctx: PluginCommandContext): Promise<CommandReply> {
-  const sub = (ctx.args ?? '').trim().toLowerCase()
+  const raw = (ctx.args ?? '').trim()
+  const sub = raw.toLowerCase().split(/\s+/)[0] ?? ''
 
   switch (sub) {
     case 'status':
@@ -82,15 +93,53 @@ async function jackclawCommandHandler(ctx: PluginCommandContext): Promise<Comman
     case 'report':
     case 'summary':
       return handleReport(ctx)
+    case 'profile':
+      return handleProfile(raw)
     case 'help':
     case '':
       return handleHelp(ctx)
     default:
       return replyText(
         `未知子命令 "${sub}"。\n` +
-        '可用：status | report | help\n' +
+        '可用：status | report | profile | help\n' +
         '输入 /jackclaw help 查看帮助。',
       )
+  }
+}
+
+async function handleProfile(rawArgs: string): Promise<CommandReply> {
+  const auth = await getClawChatAuth()
+  if (!auth) {
+    return replyText('⚠️ 未找到 ClawChat 账号信息。请重启插件以自动注册。')
+  }
+
+  // Parse optional --name "..."
+  const nameMatch = rawArgs.match(/--name\s+"([^"]+)"/) ?? rawArgs.match(/--name\s+(\S+)/)
+  if (nameMatch?.[1]) {
+    const newName = nameMatch[1]
+    try {
+      await updateMyProfile(auth.token, { displayName: newName })
+      return replyText(`✅ 显示名已更新为「${newName}」`)
+    } catch (err) {
+      return replyText(`❌ 更新失败：${(err as Error).message}`)
+    }
+  }
+
+  // Show current profile from Hub
+  try {
+    const profile = await fetchMyProfile(auth.token) as Record<string, unknown>
+    const displayName = (profile['displayName'] ?? profile['handle'] ?? auth.handle) as string
+    const bio = profile['bio'] ? `\nBio: ${profile['bio'] as string}` : ''
+    return replyText(
+      `🦞 ClawChat 账号信息\n\n` +
+      `Handle: @${auth.handle}\n` +
+      `显示名: ${displayName}` +
+      bio + `\n` +
+      `Hub: ${auth.hubUrl}\n\n` +
+      `修改昵称：/jackclaw profile --name "你的名字"`,
+    )
+  } catch (err) {
+    return replyText(`❌ 读取账号信息失败：${(err as Error).message}`)
   }
 }
 
@@ -169,7 +218,6 @@ async function chatCommandHandler(ctx: PluginCommandContext): Promise<CommandRep
     }
 
     case 'reply': {
-      // /chat reply <threadId> message...
       const threadId = rest[0]
       const content = rest.slice(1).join(' ')
       if (!threadId || !content) {
@@ -185,6 +233,65 @@ async function chatCommandHandler(ctx: PluginCommandContext): Promise<CommandRep
       }
     }
 
+    case 'group': {
+      const [groupSub, ...groupArgs] = rest
+      switch ((groupSub ?? '').toLowerCase()) {
+        case 'create': {
+          // group create 群名 @user1 @user2 ...
+          const namePart = groupArgs[0]
+          if (!namePart) {
+            return replyText('用法：/chat group create <群名> @user1 @user2\n示例：/chat group create 项目组 @alice @bob')
+          }
+          const members = groupArgs.slice(1).map(m => m.replace(/^@/, ''))
+          const createdBy = process.env['JACKCLAW_NODE_ID'] ?? 'openclaw-user'
+          try {
+            const result = await createChatGroup(namePart, members, createdBy)
+            const g = result.group ?? result
+            return replyText(`✅ 群组「${namePart}」已创建\n群组 ID：${g.groupId ?? '—'}\n成员：${members.length > 0 ? members.join(', ') : '（仅你）'}`)
+          } catch (err) {
+            return replyText(`❌ 创建群组失败：${(err as Error).message}`)
+          }
+        }
+
+        case 'list': {
+          const nodeId = process.env['JACKCLAW_NODE_ID'] ?? (groupArgs[0] ?? '')
+          if (!nodeId) {
+            return replyText('请设置 JACKCLAW_NODE_ID 环境变量，或指定节点 ID：/chat group list <nodeId>')
+          }
+          try {
+            const result = await fetchChatGroups(nodeId)
+            return replyText(formatChatGroups(result))
+          } catch (err) {
+            return replyText(`❌ 获取群组列表失败：${(err as Error).message}`)
+          }
+        }
+
+        case 'send': {
+          // group send groupId 消息...
+          const groupId = groupArgs[0]
+          const content = groupArgs.slice(1).join(' ')
+          if (!groupId || !content) {
+            return replyText('用法：/chat group send <groupId> 消息内容\n示例：/chat group send grp-123 大家好！')
+          }
+          const from = process.env['JACKCLAW_NODE_ID'] ?? 'openclaw-user'
+          try {
+            const result = await sendChatMessage(from, groupId, content)
+            return replyText(`✅ 消息已发送至群组 ${groupId}\n消息 ID：${result.messageId}`)
+          } catch (err) {
+            return replyText(`❌ 发送群消息失败：${(err as Error).message}`)
+          }
+        }
+
+        default:
+          return replyText(
+            '**群组指令**\n\n' +
+            '/chat group create <群名> @user1 @user2 — 创建群组\n' +
+            '/chat group list                        — 查看我的群组\n' +
+            '/chat group send <groupId> 消息         — 发送群消息',
+          )
+      }
+    }
+
     case 'help':
     case '':
     case undefined:
@@ -196,13 +303,14 @@ async function chatCommandHandler(ctx: PluginCommandContext): Promise<CommandRep
         '/chat inbox               — 查看未读消息\n' +
         '/chat threads             — 查看会话列表\n' +
         '/chat reply <threadId> 消息 — 回复某个会话\n' +
+        '/chat group create/list/send — 群组功能\n' +
         '/chat help                — 显示此帮助',
       )
 
     default:
       return replyText(
         `未知子命令 "${sub}"。\n` +
-        '可用：list | search | send | inbox | threads | reply | help\n' +
+        '可用：list | search | send | inbox | threads | reply | group | help\n' +
         '输入 /chat help 查看帮助。',
       )
   }

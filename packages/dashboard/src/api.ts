@@ -60,6 +60,7 @@ export interface ChatMessage {
   content: string;
   createdAt: number;
   tokens?: number;
+  attachments?: Array<{ name: string; type: string; url?: string; data?: string }>;
 }
 
 export interface ChatThreadDetail {
@@ -304,5 +305,15 @@ export const api = {
       req(`${BASE}/api/social/contacts?agentHandle=${encodeURIComponent(agentHandle)}`, {
         headers: authHeaders(token),
       }),
+
+    threadMessages: (token: string, threadId: string, limit = 200): Promise<{ messages: SocialMessage[]; count: number }> =>
+      req(`${BASE}/api/social/thread/${encodeURIComponent(threadId)}?limit=${limit}`, {
+        headers: authHeaders(token),
+      }),
+  },
+
+  presence: {
+    online: (token: string): Promise<{ users: Array<{ handle: string; nodeId: string; displayName: string; role: string; onlineSince: number | null }>; count: number }> =>
+      req(`${BASE}/api/presence/online`, { headers: authHeaders(token) }),
   },
 };

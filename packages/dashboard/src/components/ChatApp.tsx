@@ -11,6 +11,12 @@ interface Props {
   displayName: string;
 }
 
+interface OnlineUser {
+  handle: string;
+  displayName: string;
+  nodeId: string;
+}
+
 function fmtTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' });
 }
@@ -20,19 +26,25 @@ function otherParticipant(thread: SocialThread, myHandle: string): string {
 }
 
 export const ChatApp: React.FC<Props> = ({ token, userHandle, displayName }) => {
-  const [threads, setThreads]       = useState<SocialThread[]>([]);
-  const [activeThread, setActive]   = useState<SocialThread | null>(null);
-  const [messages, setMessages]     = useState<SocialMessage[]>([]);
-  const [inputText, setInputText]   = useState('');
-  const [sending, setSending]       = useState(false);
-  const [loadingMsgs, setLoadingMsgs] = useState(false);
+  const [threads, setThreads]           = useState<SocialThread[]>([]);
+  const [activeThread, setActive]       = useState<SocialThread | null>(null);
+  const [messages, setMessages]         = useState<SocialMessage[]>([]);
+  const [inputText, setInputText]       = useState('');
+  const [sending, setSending]           = useState(false);
+  const [loadingMsgs, setLoadingMsgs]   = useState(false);
+
+  // New conversation feature
+  const [showNewChat, setShowNewChat]   = useState(false);
+  const [onlineUsers, setOnlineUsers]   = useState<OnlineUser[]>([]);
+  const [loadingOnline, setLoadingOnline] = useState(false);
+  const [pendingTarget, setPendingTarget] = useState<string | null>(null); // @handle
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // JWT-authenticated WebSocket — receives social messages in real-time
   const { socialMessages, connected, connecting } = useWebSocket(null, token);
 
-  // ── Load threads ──────────────────────────────────────────────────────────
+  // ── Load threads ────────────────────────────────────────────────────────────
   const loadThreads = useCallback(() => {
     if (!userHandle) return;
     api.social.threads(token, userHandle)
@@ -42,42 +54,37 @@ export const ChatApp: React.FC<Props> = ({ token, userHandle, displayName }) => 
 
   useEffect(() => { loadThreads(); }, [loadThreads]);
 
-  // ── Load messages for active thread ──────────────────────────────────────
+  // ── Load messages for active thread (full history — both sent + received) ──
   useEffect(() => {
     if (!activeThread) { setMessages([]); return; }
     setLoadingMsgs(true);
-    api.social.messages(token, userHandle, 100)
-      .then(r => {
-        const threadMsgs = r.messages.filter(m => m.thread === activeThread.id);
-        setMessages(threadMsgs.sort((a, b) => a.ts - b.ts));
-      })
+    api.social.threadMessages(token, activeThread.id)
+      .then(r => setMessages(r.messages.slice().sort((a, b) => a.ts - b.ts)))
       .catch(() => setMessages([]))
       .finally(() => setLoadingMsgs(false));
-  }, [token, userHandle, activeThread]);
+  }, [token, activeThread]);
 
-  // ── Append real-time social messages ──────────────────────────────────────
+  // ── Append real-time social messages ────────────────────────────────────────
   useEffect(() => {
     if (socialMessages.length === 0) return;
     const latest = socialMessages[socialMessages.length - 1];
     if (!latest) return;
 
-    // Append to active thread if it matches, or refresh threads
     if (activeThread && latest.thread === activeThread.id) {
       setMessages(prev => {
         if (prev.some(m => m.id === latest.id)) return prev;
         return [...prev, latest];
       });
     }
-    // Refresh thread list to update last message preview
     loadThreads();
   }, [socialMessages, activeThread, loadThreads]);
 
-  // ── Auto-scroll ───────────────────────────────────────────────────────────
+  // ── Auto-scroll ─────────────────────────────────────────────────────────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // ── Title blink on new message ────────────────────────────────────────────
+  // ── Title blink on new message ───────────────────────────────────────────────
   useEffect(() => {
     if (socialMessages.length === 0) return;
     const orig = document.title;
@@ -86,12 +93,38 @@ export const ChatApp: React.FC<Props> = ({ token, userHandle, displayName }) => 
     return () => { clearTimeout(t); document.title = orig; };
   }, [socialMessages.length]);
 
-  // ── Send message ──────────────────────────────────────────────────────────
+  // ── Open "new conversation" modal ────────────────────────────────────────────
+  const openNewChat = useCallback(() => {
+    setShowNewChat(true);
+    setLoadingOnline(true);
+    api.presence.online(token)
+      .then(r => {
+        const others = r.users.filter(u => u.handle !== userHandle);
+        setOnlineUsers(others);
+      })
+      .catch(() => setOnlineUsers([]))
+      .finally(() => setLoadingOnline(false));
+  }, [token, userHandle]);
+
+  const selectTarget = useCallback((handle: string) => {
+    setShowNewChat(false);
+    // Check if we already have a thread with this user
+    const existing = threads.find(t => t.participants.includes(handle) && t.participants.includes(userHandle));
+    if (existing) {
+      setActive(existing);
+    } else {
+      setPendingTarget(handle);
+      setActive(null);
+      setMessages([]);
+    }
+  }, [threads, userHandle]);
+
+  // ── Send message ─────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     const text = inputText.trim();
-    if (!text || !activeThread) return;
+    const toAgent = activeThread ? otherParticipant(activeThread, userHandle) : pendingTarget;
+    if (!text || !toAgent) return;
 
-    const toAgent = otherParticipant(activeThread, userHandle);
     setSending(true);
     setInputText('');
 
@@ -102,27 +135,39 @@ export const ChatApp: React.FC<Props> = ({ token, userHandle, displayName }) => 
       toAgent,
       content: text,
       type: 'text',
-      thread: activeThread.id,
+      thread: activeThread?.id,
       ts: Date.now(),
     };
     setMessages(prev => [...prev, optimistic]);
 
     try {
-      await api.social.send(token, {
+      const res = await api.social.send(token, {
         fromHuman: displayName,
         fromAgent: userHandle,
         toAgent,
         content: text,
         type: 'text',
       });
-      loadThreads();
+
+      // If this was a pending (new) conversation, navigate to the created thread
+      if (pendingTarget) {
+        setPendingTarget(null);
+        // Reload threads then activate the new one
+        api.social.threads(token, userHandle).then(r => {
+          setThreads(r.threads);
+          const newThread = r.threads.find(t => t.id === res.thread);
+          if (newThread) setActive(newThread);
+        }).catch(() => {});
+      } else {
+        loadThreads();
+      }
     } catch {
       // Remove optimistic message on failure
       setMessages(prev => prev.filter(m => m.id !== optimistic.id));
     } finally {
       setSending(false);
     }
-  }, [inputText, activeThread, userHandle, displayName, token, loadThreads]);
+  }, [inputText, activeThread, pendingTarget, userHandle, displayName, token, loadThreads]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -132,6 +177,7 @@ export const ChatApp: React.FC<Props> = ({ token, userHandle, displayName }) => 
   }, [handleSend]);
 
   const wsStatus = connecting ? 'connecting' : connected ? 'connected' : 'disconnected';
+  const chatTitle = activeThread ? otherParticipant(activeThread, userHandle) : pendingTarget ?? null;
 
   return (
     <div className="chat-panel">
@@ -139,17 +185,42 @@ export const ChatApp: React.FC<Props> = ({ token, userHandle, displayName }) => 
       <aside className="thread-sidebar">
         <div className="sidebar-header">
           <span className="sidebar-title">消息</span>
-          <div className={`ws-status ws-${wsStatus}`} title={`WebSocket: ${wsStatus}`}>
-            <span className="ws-dot" />
-            {wsStatus === 'connected' ? '实时' : wsStatus === 'connecting' ? '…' : '离线'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              onClick={openNewChat}
+              title="新建对话"
+              style={{
+                background: 'none', border: '1px solid #30363d', borderRadius: 4,
+                color: '#f97316', cursor: 'pointer', fontSize: 16, lineHeight: 1,
+                padding: '2px 6px', fontWeight: 700,
+              }}
+            >+</button>
+            <div className={`ws-status ws-${wsStatus}`} title={`WebSocket: ${wsStatus}`}>
+              <span className="ws-dot" />
+              {wsStatus === 'connected' ? '实时' : wsStatus === 'connecting' ? '…' : '离线'}
+            </div>
           </div>
         </div>
 
         <div className="thread-list">
-          {threads.length === 0 ? (
+          {/* Pending conversation (not yet thread-backed) */}
+          {pendingTarget && (
+            <button
+              className="thread-item thread-active"
+              onClick={() => {}}
+              style={{ borderLeft: '2px solid #f97316' }}
+            >
+              <div className="thread-title">{pendingTarget} <span style={{ fontSize: 10, color: '#8b949e' }}>新</span></div>
+              <div className="thread-meta">
+                <span className="thread-count" style={{ color: '#8b949e' }}>尚未发送消息</span>
+              </div>
+            </button>
+          )}
+
+          {threads.length === 0 && !pendingTarget ? (
             <div style={{ padding: '20px 12px', color: '#8b949e', fontSize: 13, textAlign: 'center' }}>
               暂无会话<br />
-              <span style={{ fontSize: 12 }}>在联系人页添加好友后开始聊天</span>
+              <span style={{ fontSize: 12 }}>点击 + 开始新对话</span>
             </div>
           ) : (
             threads.map(t => {
@@ -158,7 +229,7 @@ export const ChatApp: React.FC<Props> = ({ token, userHandle, displayName }) => 
                 <button
                   key={t.id}
                   className={`thread-item ${activeThread?.id === t.id ? 'thread-active' : ''}`}
-                  onClick={() => setActive(t)}
+                  onClick={() => { setPendingTarget(null); setActive(t); }}
                 >
                   <div className="thread-title">{other}</div>
                   <div className="thread-meta">
@@ -176,17 +247,17 @@ export const ChatApp: React.FC<Props> = ({ token, userHandle, displayName }) => 
 
       {/* ── Right: message area ── */}
       <div className="chat-main">
-        {!activeThread ? (
+        {!chatTitle ? (
           <div className="chat-empty" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
             <div className="chat-empty-icon">💬</div>
-            <div>选择一个会话开始聊天</div>
+            <div>选择一个会话或点击 + 开始新对话</div>
           </div>
         ) : (
           <>
             <div className="chat-app-header">
-              <div className="chat-thread-title">{otherParticipant(activeThread, userHandle)}</div>
+              <div className="chat-thread-title">{chatTitle}</div>
               <div className="chat-node-info" style={{ fontSize: 12, color: '#8b949e' }}>
-                {activeThread.messageCount} 条消息
+                {activeThread ? `${activeThread.messageCount} 条消息` : '新对话'}
               </div>
             </div>
 
@@ -247,6 +318,70 @@ export const ChatApp: React.FC<Props> = ({ token, userHandle, displayName }) => 
           </>
         )}
       </div>
+
+      {/* ── New conversation modal ── */}
+      {showNewChat && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+          }}
+          onClick={e => { if (e.target === e.currentTarget) setShowNewChat(false); }}
+        >
+          <div style={{
+            background: '#161b22', border: '1px solid #30363d', borderRadius: 8,
+            width: 340, maxHeight: 480, display: 'flex', flexDirection: 'column',
+            overflow: 'hidden',
+          }}>
+            <div style={{ padding: '14px 16px', borderBottom: '1px solid #30363d', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontWeight: 600, color: '#e6edf3' }}>新建对话</span>
+              <button
+                onClick={() => setShowNewChat(false)}
+                style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 18 }}
+              >×</button>
+            </div>
+            <div style={{ padding: '8px 12px', borderBottom: '1px solid #21262d', fontSize: 12, color: '#8b949e' }}>
+              当前在线用户
+            </div>
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {loadingOnline ? (
+                <div style={{ padding: 20, textAlign: 'center', color: '#8b949e', fontSize: 13 }}>加载中…</div>
+              ) : onlineUsers.length === 0 ? (
+                <div style={{ padding: 20, textAlign: 'center', color: '#8b949e', fontSize: 13 }}>暂无在线用户</div>
+              ) : (
+                onlineUsers.map(u => (
+                  <button
+                    key={u.handle}
+                    onClick={() => selectTarget(u.handle)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      width: '100%', padding: '10px 16px', background: 'none',
+                      border: 'none', borderBottom: '1px solid #21262d', cursor: 'pointer',
+                      color: '#e6edf3', textAlign: 'left',
+                    }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#1c2128'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'none'; }}
+                  >
+                    <div style={{
+                      width: 32, height: 32, borderRadius: '50%',
+                      background: '#f97316', color: '#fff',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 13, fontWeight: 600, flexShrink: 0,
+                    }}>
+                      {(u.displayName || u.handle)[0]?.toUpperCase() ?? '?'}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: 14 }}>{u.displayName}</div>
+                      <div style={{ fontSize: 12, color: '#8b949e' }}>{u.handle}</div>
+                    </div>
+                    <div style={{ marginLeft: 'auto', width: 8, height: 8, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -5,8 +5,13 @@
  * so the plugin stays dependency-free (no extra SDK needed).
  */
 
-const DEFAULT_HUB_URL = process.env['JACKCLAW_HUB_URL'] ?? 'http://localhost:3100'
+let activeHubUrl = process.env['JACKCLAW_HUB_URL'] ?? 'http://localhost:3100'
 const CEO_TOKEN = process.env['JACKCLAW_CEO_TOKEN'] ?? ''
+
+/** Override the Hub URL at runtime (e.g. from openclaw.yaml plugin config). */
+export function setHubUrl(url: string): void {
+  activeHubUrl = url
+}
 
 export interface HubNode {
   nodeId: string
@@ -74,6 +79,24 @@ export interface ThreadsResult {
   threads: ChatThread[]
 }
 
+export interface ChatGroup {
+  groupId: string
+  name: string
+  members: string[]
+  createdBy: string
+  topic?: string
+  createdAt: number
+}
+
+export interface GroupsResult {
+  groups: ChatGroup[]
+}
+
+export interface GroupMessageResult {
+  status: string
+  messageId: string
+}
+
 // ─── Presence / search interfaces ────────────────────────────────────────────
 
 export interface OnlineUser {
@@ -115,7 +138,7 @@ export async function readChatJwt(): Promise<string> {
 }
 
 async function hubGet<T>(path: string): Promise<T> {
-  const url = `${DEFAULT_HUB_URL}${path}`
+  const url = `${activeHubUrl}${path}`
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   }
@@ -167,8 +190,32 @@ export function formatNodeStatus(nodes: HubNode[]): string {
   return `📡 节点状态 (${nodes.length} 个)\n\n${lines.join('\n')}`
 }
 
+async function hubPatch<T>(path: string, body: unknown, token?: string): Promise<T> {
+  const url = `${activeHubUrl}${path}`
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const bearerToken = token ?? CEO_TOKEN
+  if (bearerToken) headers['Authorization'] = `Bearer ${bearerToken}`
+
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(8000),
+  })
+  if (!res.ok) {
+    throw new Error(`Hub PATCH request failed: ${res.status} ${res.statusText} [${path}]`)
+  }
+  return res.json() as Promise<T>
+}
+
+/** Update the current user's ClawChat profile (e.g. displayName). */
+export async function updateChatProfile(displayName: string): Promise<void> {
+  const token = await readChatJwt()
+  await hubPatch<unknown>('/api/auth/profile', { displayName }, token)
+}
+
 async function hubPost<T>(path: string, body: unknown, token?: string): Promise<T> {
-  const url = `${DEFAULT_HUB_URL}${path}`
+  const url = `${activeHubUrl}${path}`
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   const bearerToken = token ?? CEO_TOKEN
   if (bearerToken) headers['Authorization'] = `Bearer ${bearerToken}`
@@ -186,7 +233,7 @@ async function hubPost<T>(path: string, body: unknown, token?: string): Promise<
 }
 
 async function hubGetAuth<T>(path: string, token?: string): Promise<T> {
-  const url = `${DEFAULT_HUB_URL}${path}`
+  const url = `${activeHubUrl}${path}`
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   const bearerToken = token ?? CEO_TOKEN
   if (bearerToken) headers['Authorization'] = `Bearer ${bearerToken}`
@@ -283,6 +330,26 @@ export function formatContactSearch(contacts: ContactResult[], keyword: string):
   return `🔍 搜索 "${keyword}" — ${contacts.length} 个结果\n\n${lines.join('\n')}`
 }
 
+/** Fetch the authenticated user's profile from Hub. */
+export async function fetchMyProfile(token: string): Promise<any> {
+  return hubGetAuth('/api/auth/me', token)
+}
+
+/** Update the authenticated user's profile fields. */
+export async function updateMyProfile(
+  token: string,
+  data: { displayName?: string; bio?: string },
+): Promise<any> {
+  const url = `${activeHubUrl}/api/auth/profile`
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify(data),
+    signal: AbortSignal.timeout(8000),
+  })
+  return res.json()
+}
+
 /** Format daily summary as readable text. */
 export function formatSummary(summary: HubSummary): string {
   const roleEntries = Object.values(summary.byRole)
@@ -302,4 +369,54 @@ export function formatSummary(summary: HubSummary): string {
     `汇报节点：${summary.reportingNodes}/${summary.totalNodes}\n\n` +
     sections.join('\n\n')
   )
+}
+
+// ─── Group Chat ───────────────────────────────────────────────────────────────
+
+/** Create a chat group. */
+export async function createChatGroup(
+  name: string,
+  members: string[],
+  createdBy: string,
+  token?: string,
+): Promise<{ group: ChatGroup }> {
+  const tok = token ?? (await readChatJwt())
+  return hubPost<{ group: ChatGroup }>(
+    '/api/chat/group/create',
+    { name, members, createdBy },
+    tok || undefined,
+  )
+}
+
+/** Fetch groups the node belongs to. */
+export async function fetchChatGroups(nodeId: string, token?: string): Promise<GroupsResult> {
+  const tok = token ?? (await readChatJwt())
+  return hubGetAuth<GroupsResult>(
+    `/api/chat/groups?nodeId=${encodeURIComponent(nodeId)}`,
+    tok || undefined,
+  )
+}
+
+/** Send a message to a group (Hub broadcasts to all members). */
+export async function sendGroupMessage(
+  from: string,
+  groupId: string,
+  content: string,
+  token?: string,
+): Promise<GroupMessageResult> {
+  const tok = token ?? (await readChatJwt())
+  const id = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const msg: ChatMessage = { id, from, to: groupId, content, timestamp: Date.now() }
+  return hubPost<GroupMessageResult>('/api/chat/send', msg, tok || undefined)
+}
+
+/** Format group list as readable text. */
+export function formatChatGroups(result: GroupsResult): string {
+  if (result.groups.length === 0) return '👥 暂未加入任何群组。'
+
+  const lines = result.groups.map((g) => {
+    const members = g.members.join(', ')
+    return `• [${g.groupId}] **${g.name}** — ${g.members.length} 人 (${members})`
+  })
+  return `👥 我的群组 (${result.groups.length} 个)\n\n${lines.join('\n')}`
 }

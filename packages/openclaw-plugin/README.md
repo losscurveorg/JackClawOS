@@ -21,45 +21,90 @@ JackClaw 的 OpenClaw Plugin 适配层。让 CEO 通过任意 OpenClaw 渠道（
 
 ## 安装
 
-### 1. 在 OpenClaw 配置中添加插件路径
+### 1. 安装插件包
 
-编辑 `~/.openclaw/config.yaml`（或 OpenClaw 配置文件）：
-
-```yaml
-plugins:
-  entries:
-    jackclaw:
-      path: /path/to/jackclaw/packages/openclaw-plugin
+```bash
+npm install @jackclaw/openclaw-plugin
 ```
 
-### 2. 配置推送通知（可选）
+或使用本地路径（monorepo 开发时）：
 
-如需 Hub 收到新汇报时主动推送，在插件配置下添加：
+```bash
+# 无需 npm install，直接在 openclaw.yaml 中配置本地路径
+```
+
+---
+
+## openclaw.yaml 配置
+
+在 `~/.openclaw/openclaw.yaml`（或 OpenClaw 配置文件）中添加：
 
 ```yaml
 plugins:
   entries:
     jackclaw:
-      path: /path/to/jackclaw/packages/openclaw-plugin
+      path: "@jackclaw/openclaw-plugin"
+      config:
+        hubUrl: "https://hub.jackclaw.dev"  # 或 http://localhost:3100
+        # autoRegister: true  # 默认开启，设为 false 可跳过 ClawChat 自动注册
+```
+
+### 完整配置示例（含推送通知）
+
+```yaml
+plugins:
+  entries:
+    jackclaw:
+      path: "@jackclaw/openclaw-plugin"
+      config:
+        hubUrl: "https://hub.jackclaw.dev"
+        autoRegister: true
       notifyTo: "your-feishu-open-id-or-telegram-id"
       notifyChannel: "feishu"   # 或 telegram / openclaw-weixin 等
 ```
 
-### 3. 配置环境变量
+### 配置参数说明
+
+| 参数 | 位置 | 默认值 | 说明 |
+|---|---|---|---|
+| `config.hubUrl` | `plugins.entries.jackclaw.config` | `JACKCLAW_HUB_URL` → `http://localhost:3100` | JackClaw Hub 地址 |
+| `config.autoRegister` | `plugins.entries.jackclaw.config` | `true` | 启动时自动注册 ClawChat 账号 |
+| `notifyTo` | `plugins.entries.jackclaw` | — | 推送通知目标 ID |
+| `notifyChannel` | `plugins.entries.jackclaw` | — | 推送通知渠道（feishu / telegram 等） |
+
+**hubUrl 优先级**：`config.hubUrl` > `JACKCLAW_HUB_URL` 环境变量 > `http://localhost:3100`
+
+---
+
+## 环境变量
 
 ```bash
-# Hub 地址（默认 http://localhost:3100）
+# Hub 地址（当 openclaw.yaml 未配置 config.hubUrl 时生效）
 export JACKCLAW_HUB_URL=http://localhost:3100
 
 # CEO JWT（用于访问 /api/nodes 和 /api/summary）
 export JACKCLAW_CEO_TOKEN=your-ceo-jwt-here
 ```
 
-### 4. 重启 OpenClaw Gateway
+---
+
+## 使用方法
+
+### 1. 配置好 openclaw.yaml 后，重启 OpenClaw Gateway
 
 ```bash
 openclaw gateway restart
 ```
+
+### 2. 在任意渠道发送命令
+
+```
+/jackclaw status    → 查看节点状态
+/jackclaw report    → 查看今日汇报摘要
+/jackclaw help      → 帮助说明
+```
+
+或直接发送自然语言：「节点状态」「团队汇报」等。
 
 ---
 
@@ -88,7 +133,9 @@ packages/openclaw-plugin/
 │   ├── index.ts        # Plugin 入口，注册到 OpenClaw
 │   ├── plugin.ts       # Plugin 主体，注册命令/钩子/服务
 │   ├── commands.ts     # 处理用户命令 + 自然语言匹配
-│   └── bridge.ts       # 查询 JackClaw Hub REST API
+│   ├── bridge.ts       # 查询 JackClaw Hub REST API
+│   ├── chat-bridge.ts  # ClawChat WebSocket 客户端
+│   └── clawchat-auth.ts # ClawChat 注册/认证
 └── README.md
 ```
 
@@ -113,3 +160,4 @@ packages/openclaw-plugin/
 1. **命令处理**：`/jackclaw <sub>` 由 `registerCommand` 注册，OpenClaw 在消息处理前拦截。
 2. **自然语言触发**：通过 `before_dispatch` hook 匹配关键词，`handled: true` 阻止 LLM 介入，直接返回查询结果。
 3. **定时推送**：`registerService` 启动后台轮询（60s），新汇报到来时调用 `runtime.deliver` 推送给 CEO。
+4. **ClawChat 集成**：启动时自动注册/刷新 ClawChat 账号，通过 WebSocket 接收实时消息（可通过 `autoRegister: false` 关闭）。

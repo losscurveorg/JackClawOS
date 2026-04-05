@@ -21,6 +21,7 @@ import {
   formatNodeStatus,
   fetchNodes,
   ensureClawChatAuth,
+  setHubUrl,
 } from './bridge.js'
 import { initPluginChatClient, getPluginChatClient } from './chat-bridge.js'
 
@@ -55,7 +56,7 @@ async function pushNotification(text: string, ctx: OpenClawPluginServiceContext)
 }
 
 /** Build the background polling service. */
-function buildJackclawService(): OpenClawPluginService {
+function buildJackclawService(hubUrl: string, autoRegister: boolean): OpenClawPluginService {
   let stopped = false
   let lastReportingNodes = 0
   // Dedup window: message id → arrival timestamp (purged after 60 s)
@@ -67,19 +68,34 @@ function buildJackclawService(): OpenClawPluginService {
       ctx.logger.info('[jackclaw] Hub poller started (interval: 60s)')
       stopped = false
 
+      // ── Apply Hub URL from config ─────────────────────────────────────────
+      setHubUrl(hubUrl)
+      ctx.logger.info(`[jackclaw] Hub URL: ${hubUrl}`)
+
       // ── Auto-register / refresh ClawChat Hub account on first load ──────
-      const hubUrl = process.env['JACKCLAW_HUB_URL'] ?? 'http://localhost:3100'
       let chatToken = ''
-      try {
-        // Prefer OpenClaw user identity when available, fall back to random handle.
-        const cfg = ctx.config as Record<string, unknown>
-        const identity = (cfg['user'] as Record<string, unknown> | undefined)?.['handle'] as string | undefined
-        const { handle, token } = await ensureClawChatAuth(hubUrl, identity)
-        chatToken = token
-        ctx.logger.info(`[jackclaw] ClawChat auth ready (handle: ${handle})`)
-      } catch (err) {
-        // Non-fatal: plugin still works without ClawChat registration.
-        ctx.logger.warn(`[jackclaw] ClawChat auto-register failed: ${String(err)}`)
+      if (autoRegister) {
+        try {
+          // Prefer OpenClaw user identity when available, fall back to random handle.
+          const cfg = ctx.config as Record<string, unknown>
+          const identity = (cfg['user'] as Record<string, unknown> | undefined)?.['handle'] as string | undefined
+          const { handle, token, isNew } = await ensureClawChatAuth(hubUrl, identity)
+          chatToken = token
+          ctx.logger.info(`[jackclaw] ClawChat auth ready (handle: ${handle})`)
+
+          // On first registration, send a welcome message via pushNotification
+          if (isNew) {
+            const welcomeText =
+              `🦞 ClawChat 已就绪！你的账号: @${handle}\n` +
+              `使用 /chat send @someone 消息 开始聊天`
+            await pushNotification(welcomeText, ctx)
+          }
+        } catch (err) {
+          // Non-fatal: plugin still works without ClawChat registration.
+          ctx.logger.warn(`[jackclaw] ClawChat auto-register failed: ${String(err)}`)
+        }
+      } else {
+        ctx.logger.info('[jackclaw] autoRegister disabled — skipping ClawChat registration')
       }
 
       // ── Start WebSocket chat client ───────────────────────────────────────
@@ -170,6 +186,29 @@ function buildJackclawService(): OpenClawPluginService {
 
 /** Register the JackClaw plugin with OpenClaw. */
 export function registerJackclawPlugin(api: OpenClawPluginApi): void {
+  // ── Resolve plugin config (openclaw.yaml → env var → default) ──────────
+  const globalCfg = api.config as Record<string, unknown>
+  // Support both: plugins.entries.jackclaw.config and plugins.jackclaw.config
+  const entriesCfg = (globalCfg['plugins'] as Record<string, unknown> | undefined)?.['entries'] as
+    | Record<string, unknown>
+    | undefined
+  const pluginSection =
+    (entriesCfg?.['jackclaw'] as Record<string, unknown> | undefined) ??
+    ((globalCfg['plugins'] as Record<string, unknown> | undefined)?.['jackclaw'] as
+      | Record<string, unknown>
+      | undefined)
+  const pluginConfig = (pluginSection?.['config'] as Record<string, unknown> | undefined) ?? {}
+
+  const hubUrl: string =
+    (pluginConfig['hubUrl'] as string | undefined) ??
+    process.env['JACKCLAW_HUB_URL'] ??
+    'http://localhost:3100'
+
+  // autoRegister defaults to true; set to false in config to skip registration
+  const autoRegister: boolean = pluginConfig['autoRegister'] !== false
+
+  api.logger.info(`[jackclaw] config — hubUrl: ${hubUrl}, autoRegister: ${autoRegister}`)
+
   // 1. Register slash commands
   for (const cmd of JACKCLAW_COMMANDS) {
     api.registerCommand(cmd)
@@ -242,7 +281,7 @@ export function registerJackclawPlugin(api: OpenClawPluginApi): void {
   })
 
   // 4. Register background Hub poller service
-  api.registerService(buildJackclawService())
+  api.registerService(buildJackclawService(hubUrl, autoRegister))
 
   api.logger.info('[jackclaw] JackClaw plugin registered ✅')
 }

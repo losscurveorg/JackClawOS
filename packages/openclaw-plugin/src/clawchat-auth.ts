@@ -104,21 +104,23 @@ export async function getClawChatAuth(): Promise<{ handle: string; token: string
  *   2. Expired token on disk → re-login with stored password, persist new token.
  *   3. No credentials        → register a fresh account ("claw-" + 8 hex chars),
  *                              persist credentials with mode 0o600.
+ *
+ * `isNew` is true only when a brand-new account was just created.
  */
 export async function ensureClawChatAuth(
   hubUrl: string,
   preferredHandle?: string,
-): Promise<{ handle: string; token: string }> {
+): Promise<{ handle: string; token: string; isNew: boolean }> {
   const existing = await readCredentials()
 
   if (existing) {
     if (!isTokenExpired(existing.token)) {
-      return { handle: existing.handle, token: existing.token }
+      return { handle: existing.handle, token: existing.token, isNew: false }
     }
     // Token expired — re-login silently.
     const newToken = await loginRequest(hubUrl, existing.handle, existing.password)
     await writeCredentials({ ...existing, token: newToken })
-    return { handle: existing.handle, token: newToken }
+    return { handle: existing.handle, token: newToken, isNew: false }
   }
 
   // No credentials — register a brand-new account.
@@ -127,5 +129,10 @@ export async function ensureClawChatAuth(
   const token    = await registerRequest(hubUrl, handle, password)
 
   await writeCredentials({ handle, password, token, hubUrl, registeredAt: Date.now() })
-  return { handle, token }
+
+  // Inform the user about the newly created account.
+  console.log(`🦞 ClawChat: 已自动注册 @${handle}，Hub: ${hubUrl}`)
+  console.log('如需修改昵称，使用 /jackclaw profile --name "你的名字"')
+
+  return { handle, token, isNew: true }
 }

@@ -1,7 +1,53 @@
-// MessageBubble — 单条消息气泡，区分自己/对方，支持多种消息类型
+// MessageBubble — 单条消息气泡，区分自己/对方，支持 Markdown 渲染和图片附件
 
 import React, { useState, useRef } from 'react';
 import type { ChatMessage } from '../api.js';
+
+function renderMarkdown(text: string): React.ReactNode[] {
+  const parts: React.ReactNode[] = [];
+  const codeBlockRe = /```([\s\S]*?)```/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let keyIndex = 0;
+
+  function processInline(chunk: string, baseKey: string): React.ReactNode[] {
+    const nodes: React.ReactNode[] = [];
+    const inlineRe = /(`[^`]+`|\*\*[\s\S]+?\*\*|https?:\/\/[^\s<>"]+|\n)/g;
+    let last = 0;
+    let m: RegExpExecArray | null;
+    let k = 0;
+    while ((m = inlineRe.exec(chunk)) !== null) {
+      if (m.index > last) nodes.push(chunk.slice(last, m.index));
+      const token = m[0];
+      if (token.startsWith('`')) {
+        nodes.push(<code key={`${baseKey}-ic${k}`}>{token.slice(1, -1)}</code>);
+      } else if (token.startsWith('**')) {
+        nodes.push(<strong key={`${baseKey}-b${k}`}>{token.slice(2, -2)}</strong>);
+      } else if (token.startsWith('http')) {
+        nodes.push(<a key={`${baseKey}-a${k}`} href={token} target="_blank" rel="noreferrer">{token}</a>);
+      } else if (token === '\n') {
+        nodes.push(<br key={`${baseKey}-br${k}`} />);
+      }
+      last = m.index + token.length;
+      k++;
+    }
+    if (last < chunk.length) nodes.push(chunk.slice(last));
+    return nodes;
+  }
+
+  while ((match = codeBlockRe.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      const chunk = text.slice(lastIndex, match.index);
+      parts.push(...processInline(chunk, `c${keyIndex++}`));
+    }
+    parts.push(<pre key={`pre${keyIndex++}`}><code>{match[1]}</code></pre>);
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    parts.push(...processInline(text.slice(lastIndex), `c${keyIndex++}`));
+  }
+  return parts;
+}
 
 interface Props {
   msg: ChatMessage;
@@ -93,7 +139,7 @@ export const MessageBubble: React.FC<Props> = ({ msg, onReply, replyTo }) => {
           onTouchEnd={handleLongPressEnd}
           onContextMenu={e => { e.preventDefault(); setMenuOpen(true); }}
         >
-          {/* Image message */}
+          {/* Image message (legacy [image] prefix) */}
           {msg.content.startsWith('[image]') ? (
             <img
               className="msg-image"
@@ -107,8 +153,18 @@ export const MessageBubble: React.FC<Props> = ({ msg, onReply, replyTo }) => {
               <span className="msg-file-name">{msg.content.replace('[file]', '').trim()}</span>
             </div>
           ) : (
-            <div className="msg-text">{msg.content}</div>
+            <div className="msg-text">{renderMarkdown(msg.content)}</div>
           )}
+
+          {/* Attachment images */}
+          {msg.attachments && msg.attachments.filter(a => a.type === 'image').map((att, i) => (
+            <img
+              key={i}
+              className="msg-image"
+              src={att.data ?? att.url}
+              alt={att.name}
+            />
+          ))}
 
           {/* Footer: time + status */}
           <div className="msg-meta">

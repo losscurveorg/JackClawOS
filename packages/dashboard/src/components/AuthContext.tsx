@@ -68,20 +68,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (storedToken && storedUser) {
       if (isTokenExpired(storedToken)) {
-        // Expired — clear storage
+        // Expired client-side — clear immediately
         localStorage.removeItem(LS_USER_TOKEN);
         localStorage.removeItem(LS_USER_DATA);
+        setLoading(false);
       } else {
+        // Optimistically restore from cache, then verify with server
         try {
           setToken(storedToken);
           setUser(JSON.parse(storedUser) as AuthUser);
         } catch {
           localStorage.removeItem(LS_USER_TOKEN);
           localStorage.removeItem(LS_USER_DATA);
+          setLoading(false);
+          return;
         }
+        // Verify token is still valid server-side
+        api.auth.me(storedToken)
+          .then(profile => {
+            // Update user with fresh data from server
+            const updated = profile as AuthUser;
+            setUser(updated);
+            localStorage.setItem(LS_USER_DATA, JSON.stringify(updated));
+          })
+          .catch(() => {
+            // Token rejected by server — clear session
+            localStorage.removeItem(LS_USER_TOKEN);
+            localStorage.removeItem(LS_USER_DATA);
+            setToken(null);
+            setUser(null);
+          })
+          .finally(() => setLoading(false));
+        return; // setLoading(false) handled in .finally
       }
+    } else {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   // Periodic expiry check (every 60s)

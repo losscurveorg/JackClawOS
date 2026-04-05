@@ -225,7 +225,7 @@ export const AuthPage: React.FC = () => {
       <div className="auth-card">
         {/* Brand */}
         <div className="auth-brand">
-          <span className="auth-logo">⬡</span>
+          <span className="auth-logo">🦞</span>
           <span className="auth-brand-name">JackClaw</span>
         </div>
 

@@ -462,6 +462,18 @@ router.get('/threads', (req: Request, res: Response) => {
   return res.json({ threads, count: threads.length })
 })
 
+// ─── GET /thread/:id — 获取指定会话的完整消息历史 ─────────────────────────────
+
+router.get('/thread/:id', (req: Request, res: Response) => {
+  const threadId = decodeURIComponent(req.params.id)
+  const limit    = Math.min(parseInt((req.query.limit as string) ?? '200', 10), 500)
+
+  const stored   = messageStore.getThread(threadId, limit, 0)
+  const messages = stored.map(storedToSocial)
+
+  return res.json({ messages, count: messages.length })
+})
+
 // ─── GET /drain/:nodeId — Node 上线后拉取离线 social 消息 ─────────────────────
 
 router.get('/drain/:nodeId', (req: Request, res: Response) => {

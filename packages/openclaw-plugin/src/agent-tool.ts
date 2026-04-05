@@ -630,6 +630,91 @@ function buildChatOnlineTool(): OpenClawTool {
   }
 }
 
+/**
+ * jackclaw_chat_group_create — 创建聊天群组
+ */
+function buildChatGroupCreateTool(nodeId: string): OpenClawTool {
+  return {
+    name: 'jackclaw_chat_group_create',
+    description: '创建一个新的 ClawChat 群组，并将指定成员加入。',
+    parameters: {
+      type: 'object',
+      required: ['name', 'members'],
+      properties: {
+        name: {
+          type: 'string',
+          description: '群组名称',
+        },
+        members: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '成员 handle 列表（例如 ["alice", "bob"]）',
+        },
+      },
+    },
+    async handler(params) {
+      const p = params as { name: string; members: string[] }
+      const jwt = await readChatJwt()
+      const result = await hubRequest<{ group: { groupId: string; name: string; members: string[] } }>(
+        'POST',
+        '/api/chat/group/create',
+        { name: p.name, members: p.members, createdBy: nodeId },
+        jwt || undefined,
+      )
+      const g = result.group
+      return {
+        success: true,
+        groupId: g.groupId,
+        name: g.name,
+        members: g.members,
+        summary: `群组「${g.name}」已创建（ID: ${g.groupId}），成员：${g.members.join(', ')}`,
+      }
+    },
+  }
+}
+
+/**
+ * jackclaw_chat_group_list — 查看我加入的群组
+ */
+function buildChatGroupListTool(nodeId: string): OpenClawTool {
+  return {
+    name: 'jackclaw_chat_group_list',
+    description: '列出当前节点所属的所有 ClawChat 群组。',
+    parameters: {
+      type: 'object',
+      required: [],
+      properties: {},
+    },
+    async handler(_params) {
+      const jwt = await readChatJwt()
+      const result = await hubRequest<{
+        groups: Array<{
+          groupId: string
+          name: string
+          members: string[]
+          createdBy: string
+          createdAt: number
+        }>
+      }>('GET', `/api/chat/groups?nodeId=${encodeURIComponent(nodeId)}`, undefined, jwt || undefined)
+
+      const groups = result.groups ?? []
+      if (groups.length === 0) {
+        return { count: 0, groups: [], summary: '暂未加入任何群组。' }
+      }
+
+      const lines = groups.map(
+        (g) => `[${g.groupId}] **${g.name}** — ${g.members.length} 人`,
+      )
+
+      return {
+        count: groups.length,
+        groups,
+        summary: `共 ${groups.length} 个群组：\n${lines.join('\n')}`,
+      }
+    },
+  }
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -649,5 +734,7 @@ export function getJackClawTools(nodeId: string): OpenClawTool[] {
     buildChatThreadsTool(),
     buildChatSearchUsersTool(),
     buildChatOnlineTool(),
+    buildChatGroupCreateTool(nodeId),
+    buildChatGroupListTool(nodeId),
   ]
 }
